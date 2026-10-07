@@ -44,7 +44,8 @@ import {
   SmartArrivalState, 
   SmartArrivalDistanceOption,
   SmartArrivalRecord,
-  FoodOrder
+  FoodOrder,
+  RestaurantFloor
 } from '../types';
 import { TIME_SLOTS, parseTimeToMinutes } from '../data/mockData';
 import { QrScannerModal } from './QrScannerModal';
@@ -121,6 +122,7 @@ interface RestaurantDashboardProps {
   onSignOut?: () => void;
   onSyncReservations?: (backendReservations: Reservation[]) => void;
   onUpdateRestaurantTables?: (restaurantId: string, updatedTables: Table[]) => void;
+  onUpdateRestaurantFloors?: (restaurantId: string, updatedFloors: RestaurantFloor[]) => void;
   onUpdateRestaurantDetails?: (restaurantId: string, details: { name: string; ownerName: string; address: string; customerCareNumber: string }) => void;
 }
 
@@ -139,6 +141,7 @@ export const RestaurantDashboard: React.FC<RestaurantDashboardProps> = ({
   onSignOut,
   onSyncReservations,
   onUpdateRestaurantTables,
+  onUpdateRestaurantFloors,
   onUpdateRestaurantDetails,
 }) => {
   const [dashboardView, setDashboardView] = useState<DashboardViewOption>('overview');
@@ -2255,6 +2258,19 @@ export const RestaurantDashboard: React.FC<RestaurantDashboardProps> = ({
           onSyncTables={() => syncTablesFromGoogleSheet(true)}
           onAddTable={handleAddTable}
           onRemoveTable={handleRemoveTable}
+          onUpdateFloors={(updatedFloors) => {
+            if (onUpdateRestaurantFloors) {
+              onUpdateRestaurantFloors(activeRestaurant.id, updatedFloors);
+            }
+          }}
+          onTableReposition={(tableId, newX, newY) => {
+            const currentList = backendTables && backendTables.length > 0 ? backendTables : activeRestaurant.tables;
+            const updated = currentList.map((t) => (t.id === tableId ? { ...t, x: newX, y: newY } : t));
+            setBackendTables(updated);
+            if (onUpdateRestaurantTables) {
+              onUpdateRestaurantTables(activeRestaurant.id, updated);
+            }
+          }}
         />
       )}
 

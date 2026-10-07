@@ -6,6 +6,16 @@ export type SeatingPreference = 'all' | 'window' | 'booth' | 'terrace' | 'quiet'
 
 export type TableShape = 'rect' | 'circle' | 'booth';
 
+export type TableCategory = 'Standard' | 'VIP' | 'Family' | 'Couple' | 'Private' | 'Outdoor' | 'Bar';
+
+export interface RestaurantFloor {
+  id: string;
+  floorNumber: number; // 0 for Ground, 1 for 1st Floor, etc.
+  name: string; // e.g. "Ground Floor", "1st Floor", "Rooftop Terrace"
+  description?: string;
+  order: number;
+}
+
 export interface Table {
   id: string;
   tableId?: string;
@@ -21,6 +31,12 @@ export interface Table {
   width: number;
   height: number;
   status?: TableState;
+  // Floor configuration
+  floorId?: string;
+  floorNumber?: number;
+  floorName?: string;
+  // Table category
+  category?: TableCategory | string;
   // Dynamic slot availability map: `${date}_${timeSlot}` -> TableState
   slotStatus?: Record<string, TableState>;
 }
@@ -52,6 +68,7 @@ export interface Restaurant {
   customerCareNumber?: string;
   ownerName?: string;
   floorPlanName: string;
+  floors?: RestaurantFloor[];
   tables: Table[];
   popularDishes: string[];
   description: string;

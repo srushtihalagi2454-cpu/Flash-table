@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Armchair, 
   Users, 
@@ -16,12 +16,16 @@ import {
   AlertCircle,
   Plus,
   Trash2,
-  ShieldCheck
+  ShieldCheck,
+  Layers
 } from 'lucide-react';
-import { Table, TableState, Restaurant, Reservation } from '../types';
+import { Table, TableState, Restaurant, Reservation, RestaurantFloor } from '../types';
 import { TIME_SLOTS, parseTimeToMinutes } from '../data/mockData';
 import { AddTableModal } from './AddTableModal';
 import { RemoveTableModal } from './RemoveTableModal';
+import { ManageFloorsModal } from './ManageFloorsModal';
+import { Restaurant3DFloorPlan } from './Restaurant3DFloorPlan';
+import { ensureRestaurantFloors, ensureTablesHaveFloors } from '../utils/floorUtils';
 import { hydrateReservationWithSoloSafety } from '../services/soloSafetyService';
 
 interface LiveTablesTabProps {
@@ -40,6 +44,8 @@ interface LiveTablesTabProps {
   onSyncTables?: () => void;
   onAddTable?: (table: Table) => Promise<boolean>;
   onRemoveTable?: (tableId: string) => Promise<boolean>;
+  onUpdateFloors?: (floors: RestaurantFloor[]) => void;
+  onTableReposition?: (tableId: string, x: number, y: number) => void;
 }
 
 export const LiveTablesTab: React.FC<LiveTablesTabProps> = ({
@@ -58,11 +64,40 @@ export const LiveTablesTab: React.FC<LiveTablesTabProps> = ({
   onSyncTables,
   onAddTable,
   onRemoveTable,
+  onUpdateFloors,
+  onTableReposition,
 }) => {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
+  const [isManageFloorsOpen, setIsManageFloorsOpen] = useState<boolean>(false);
   const [tablePendingRemoval, setTablePendingRemoval] = useState<Table | null>(null);
   const [actionToast, setActionToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Dynamic floors state
+  const [floors, setFloors] = useState<RestaurantFloor[]>(() => ensureRestaurantFloors(restaurant));
+  const [activeFloorId, setActiveFloorId] = useState<string>(() => floors[0]?.id || 'floor-0');
+  const [viewPresentation, setViewPresentation] = useState<'3D' | '2D'>('3D');
+
+  useEffect(() => {
+    const nextF = ensureRestaurantFloors(restaurant);
+    setFloors(nextF);
+    if (!nextF.some((f) => f.id === activeFloorId)) {
+      setActiveFloorId(nextF[0]?.id || 'floor-0');
+    }
+  }, [restaurant]);
+
+  // Compute table counts by floor
+  const tableCountsByFloor = useMemo(() => {
+    const counts: Record<string, number> = {};
+    floors.forEach((f) => { counts[f.id] = 0; });
+    restaurant.tables.forEach((t) => {
+      const fId = t.floorId || (floors.find((f) => f.floorNumber === t.floorNumber)?.id) || floors[0]?.id;
+      if (fId) {
+        counts[fId] = (counts[fId] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [restaurant.tables, floors]);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setActionToast({ message, type });
@@ -254,6 +289,46 @@ export const LiveTablesTab: React.FC<LiveTablesTabProps> = ({
             <span>Reset States</span>
           </button>
 
+          {/* Configure Floors button */}
+          <button
+            type="button"
+            onClick={() => setIsManageFloorsOpen(true)}
+            className="px-3.5 py-1.5 text-xs font-semibold text-[#2C3333] hover:bg-[#FAF9F6] border border-[#E8E6E1] rounded-full flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Configure physical floors in your restaurant"
+            id="btn-manage-floors"
+          >
+            <Layers className="w-3.5 h-3.5 text-[#4F6F52]" />
+            <span>Manage Floors ({floors.length})</span>
+          </button>
+
+          {/* 3D vs 2D Presentation Switcher */}
+          <div className="flex items-center gap-1 bg-[#FAF9F6] p-1 rounded-full border border-[#E8E6E1]">
+            <button
+              type="button"
+              onClick={() => setViewPresentation('3D')}
+              className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                viewPresentation === '3D'
+                  ? 'bg-[#4F6F52] text-white shadow-2xs'
+                  : 'text-[#2C3333]/70 hover:text-[#2C3333]'
+              }`}
+              id="btn-admin-presentation-3d"
+            >
+              3D View
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewPresentation('2D')}
+              className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                viewPresentation === '2D'
+                  ? 'bg-[#4F6F52] text-white shadow-2xs'
+                  : 'text-[#2C3333]/70 hover:text-[#2C3333]'
+              }`}
+              id="btn-admin-presentation-2d"
+            >
+              2D
+            </button>
+          </div>
+
           {onAddTable && (
             <button
               type="button"
@@ -392,71 +467,100 @@ export const LiveTablesTab: React.FC<LiveTablesTabProps> = ({
             </span>
           </div>
 
-          {/* Blueprint Stage */}
-          <div className="relative w-full aspect-[16/11] bg-[#FAF9F6] rounded-2xl border border-[#E8E6E1] p-4 select-none overflow-hidden" id="live-tables-blueprint-container">
-            {/* Grid background */}
-            <div 
-              className="absolute inset-0 opacity-20 pointer-events-none"
-              style={{
-                backgroundImage: 'radial-gradient(#4F6F52 1px, transparent 1px)',
-                backgroundSize: '20px 20px'
-              }}
-            />
+          {/* Blueprint / 3D Stage */}
+          {viewPresentation === '3D' ? (
+            <div className="w-full">
+              <Restaurant3DFloorPlan
+                floors={floors}
+                activeFloorId={activeFloorId}
+                onSelectFloor={(fId) => setActiveFloorId(fId)}
+                tables={restaurant.tables}
+                selectedTableId={activeTable?.id || null}
+                onSelectTable={(table) => onSelectTable(table)}
+                getTableStatus={getTableStaffStatus}
+                isAdminView={true}
+                onTableReposition={(tableId, newX, newY) => {
+                  if (onTableReposition) {
+                    onTableReposition(tableId, newX, newY);
+                  }
+                }}
+                onToggleTableMaintenance={(tableId) => {
+                  const targetT = restaurant.tables.find((t) => t.id === tableId);
+                  if (targetT) {
+                    const current = getTableStaffStatus(targetT);
+                    const next = current === 'unavailable' ? 'available' : 'unavailable';
+                    onSetTableStatus(tableId, next);
+                    showToast(`Table ${targetT.tableNumber} status set to ${next}.`, 'success');
+                  }
+                }}
+              />
+            </div>
+          ) : (
+            <div className="relative w-full aspect-[16/11] bg-[#FAF9F6] rounded-2xl border border-[#E8E6E1] p-4 select-none overflow-hidden" id="live-tables-blueprint-container">
+              {/* Grid background */}
+              <div 
+                className="absolute inset-0 opacity-20 pointer-events-none"
+                style={{
+                  backgroundImage: 'radial-gradient(#4F6F52 1px, transparent 1px)',
+                  backgroundSize: '20px 20px'
+                }}
+              />
 
-            {/* Tables on Blueprint */}
-            {restaurant.tables.map((table) => {
-              const state = getTableStaffStatus(table);
-              const isSelected = activeTable?.id === table.id;
-              const badgeStyle = getStatusBadge(state);
-              const tableRes = (reservations || []).find(r => 
-                (r.tableId === table.id || r.tableNumber === table.tableNumber || r.tableNumber === `T-${table.tableNumber.replace('T', '')}`) && 
-                (r.status === 'confirmed' || r.status === 'seated' || r.status === 'checked-in')
-              );
+              {/* Tables on Blueprint */}
+              {restaurant.tables.map((table) => {
+                const state = getTableStaffStatus(table);
+                const isSelected = activeTable?.id === table.id;
+                const badgeStyle = getStatusBadge(state);
+                const tableRes = (reservations || []).find(r => 
+                  (r.tableId === table.id || r.tableNumber === table.tableNumber || r.tableNumber === `T-${table.tableNumber.replace('T', '')}`) && 
+                  (r.status === 'confirmed' || r.status === 'seated' || r.status === 'checked-in')
+                );
 
-              return (
-                <div
-                  key={table.id}
-                  onClick={() => onSelectTable(table)}
-                  style={{
-                    left: `${table.x}%`,
-                    top: `${table.y}%`,
-                    width: `${table.width}%`,
-                    height: `${table.height}%`,
-                  }}
-                  className={`absolute cursor-pointer transition-all duration-200 flex flex-col items-center justify-center ${
-                    isSelected ? 'scale-105 z-20' : 'hover:scale-102 z-10'
-                  }`}
-                  id={`live-table-node-${table.tableNumber.toLowerCase().replace('-', '')}`}
-                  title={`Table ${table.tableNumber} (${table.capacity} guests) - ${state.toUpperCase()}`}
-                >
-                  <div className={`w-full h-full p-1.5 text-center flex flex-col items-center justify-center rounded-2xl border-2 transition-all ${
-                    badgeStyle.bg
-                  } ${badgeStyle.border} ${badgeStyle.text} ${
-                    isSelected ? 'ring-3 ring-[#4F6F52] ring-offset-2 shadow-md' : 'shadow-2xs'
-                  }`}>
-                    <div className="flex items-center gap-1 font-bold text-xs">
-                      <span>{table.tableNumber}</span>
-                      <span className={`w-1.5 h-1.5 rounded-full ${badgeStyle.dot}`} />
-                    </div>
-                    
-                    <span className="text-[9px] uppercase font-bold tracking-wider mt-0.5">
-                      {state}
-                    </span>
-
-                    {tableRes && (
-                      <span className="text-[8px] uppercase font-bold tracking-tight mt-0.5 px-1 py-0.2 rounded bg-amber-200 text-amber-900 leading-none truncate max-w-full">
-                        {tableRes.customerName.split(' ')[0]} · {tableRes.timeSlot.split(' ')[0]}
+                return (
+                  <div
+                    key={table.id}
+                    onClick={() => onSelectTable(table)}
+                    style={{
+                      left: `${table.x}%`,
+                      top: `${table.y}%`,
+                      width: `${table.width}%`,
+                      height: `${table.height}%`,
+                    }}
+                    className={`absolute cursor-pointer transition-all duration-200 flex flex-col items-center justify-center ${
+                      isSelected ? 'scale-105 z-20' : 'hover:scale-102 z-10'
+                    }`}
+                    id={`live-table-node-${table.tableNumber.toLowerCase().replace('-', '')}`}
+                    title={`Table ${table.tableNumber} (${table.capacity} guests) - ${state.toUpperCase()}`}
+                  >
+                    <div className={`w-full h-full p-1.5 text-center flex flex-col items-center justify-center rounded-2xl border-2 transition-all ${
+                      badgeStyle.bg
+                    } ${badgeStyle.border} ${badgeStyle.text} ${
+                      isSelected ? 'ring-3 ring-[#4F6F52] ring-offset-2 shadow-md' : 'shadow-2xs'
+                    }`}>
+                      <div className="flex items-center gap-1 font-bold text-xs">
+                        <span>{table.tableNumber}</span>
+                        <span className={`w-1.5 h-1.5 rounded-full ${badgeStyle.dot}`} />
+                      </div>
+                      
+                      <span className="text-[9px] uppercase font-bold tracking-wider mt-0.5">
+                        {state}
                       </span>
-                    )}
 
-                    <span className="text-[8px] opacity-70 mt-0.5">
-                      {table.capacity}p
-                    </span>
+                      {tableRes && (
+                        <span className="text-[8px] uppercase font-bold tracking-tight mt-0.5 px-1 py-0.2 rounded bg-amber-200 text-amber-900 leading-none truncate max-w-full">
+                          {tableRes.customerName.split(' ')[0]} · {tableRes.timeSlot.split(' ')[0]}
+                        </span>
+                      )}
+
+                      <span className="text-[8px] opacity-70 mt-0.5">
+                        {table.capacity}p
+                      </span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Quick Select Table Chips */}
           <div>
@@ -774,6 +878,8 @@ export const LiveTablesTab: React.FC<LiveTablesTabProps> = ({
           restaurantId={restaurant.id}
           restaurantName={restaurant.name}
           existingTables={restaurant.tables}
+          floors={floors}
+          activeFloorId={activeFloorId}
           onClose={() => setIsAddModalOpen(false)}
           onAddTable={async (newTable) => {
             const success = await onAddTable(newTable);
@@ -781,6 +887,23 @@ export const LiveTablesTab: React.FC<LiveTablesTabProps> = ({
               showToast(`Table ${newTable.tableNumber} added successfully to ${restaurant.name}.`, 'success');
             }
             return success;
+          }}
+        />
+      )}
+
+      {/* Manage Floors Modal */}
+      {isManageFloorsOpen && (
+        <ManageFloorsModal
+          restaurantName={restaurant.name}
+          floors={floors}
+          tableCountsByFloor={tableCountsByFloor}
+          onClose={() => setIsManageFloorsOpen(false)}
+          onUpdateFloors={(updatedFloors) => {
+            setFloors(updatedFloors);
+            if (onUpdateFloors) {
+              onUpdateFloors(updatedFloors);
+            }
+            showToast(`Floor layout updated. ${updatedFloors.length} floor(s) configured.`, 'success');
           }}
         />
       )}

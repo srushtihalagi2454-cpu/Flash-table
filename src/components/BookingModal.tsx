@@ -29,8 +29,10 @@ import {
   Check,
   Bus
 } from 'lucide-react';
-import { Restaurant, Table, Reservation, SeatingPreference, SmartMatchResult, PaymentDetails, FoodOrder, SoloDinerSafetyContact, SoloSafetyNotifyMethod } from '../types';
+import { Restaurant, Table, Reservation, SeatingPreference, SmartMatchResult, PaymentDetails, FoodOrder, SoloDinerSafetyContact, SoloSafetyNotifyMethod, RestaurantFloor } from '../types';
 import { InteractiveFloorPlan } from './InteractiveFloorPlan';
+import { Restaurant3DFloorPlan } from './Restaurant3DFloorPlan';
+import { ensureRestaurantFloors, ensureTablesHaveFloors } from '../utils/floorUtils';
 import { TimeRangePicker } from './TimeRangePicker';
 import { TIME_SLOTS, getTableState } from '../data/mockData';
 import { isTimeSlotWithinHours, getFormattedOperatingHours } from '../utils/operatingHours';
@@ -159,11 +161,25 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     return getFormattedOperatingHours(restaurant.openingHours);
   }, [restaurant.openingHours]);
 
+  // Dynamic Floor Management
+  const [floors, setFloors] = useState<RestaurantFloor[]>(() => ensureRestaurantFloors(restaurant));
+  const [activeFloorId, setActiveFloorId] = useState<string>(() => floors[0]?.id || 'floor-0');
+  const [viewMode, setViewMode] = useState<'3D' | '2D'>('3D');
+
+  useEffect(() => {
+    const updatedFloors = ensureRestaurantFloors(restaurant);
+    setFloors(updatedFloors);
+    if (!updatedFloors.some((f) => f.id === activeFloorId)) {
+      setActiveFloorId(updatedFloors[0]?.id || 'floor-0');
+    }
+  }, [restaurant]);
+
   // Dynamic table inventory for selected restaurant
   const [activeTables, setActiveTables] = useState<Table[]>(() => {
-    return (restaurant.tables || []).filter(
+    const initialRaw = (restaurant.tables || []).filter(
       (t) => (t as any).status !== 'inactive' && (t as any).status !== 'removed'
     );
+    return ensureTablesHaveFloors(initialRaw, floors);
   });
 
   // Sync with restaurant prop updates
@@ -171,8 +187,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     const valid = (restaurant.tables || []).filter(
       (t) => (t as any).status !== 'inactive' && (t as any).status !== 'removed'
     );
-    setActiveTables(valid);
-  }, [restaurant.tables]);
+    setActiveTables(ensureTablesHaveFloors(valid, floors));
+  }, [restaurant.tables, floors]);
 
   // Fetch live tables from Google Sheet backend for this specific restaurant
   useEffect(() => {
@@ -700,20 +716,76 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
             )}
 
-            {/* Interactive 2D Blueprint Component */}
-            <InteractiveFloorPlan
-              tables={activeTables}
-              selectedTableId={selectedTable?.id || null}
-              onSelectTable={(table) => setSelectedTable(table)}
-              date={date}
-              timeSlot={timeSlot}
-              guests={guests}
-              seatingPreference={seatingPreference}
-              getTableStatus={getTableCurrentState}
-              smartMatch={smartMatchResult}
-              onApplySmartMatch={handleApplySmartMatch}
-              onOpenNotifyMe={() => onOpenNotifyMe(restaurant, date, timeSlot, guests, seatingPreference)}
-            />
+            {/* View Mode Toggle: 3D Floor View vs 2D Blueprint */}
+            <div className="flex items-center justify-between bg-white px-5 py-3 rounded-2xl border border-[#E8E6E1] shadow-2xs">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-[#2C3333]">Floor Presentation:</span>
+                <span className="text-[11px] text-[#2C3333]/60 hidden sm:inline">
+                  Interactive multi-floor restaurant visualization
+                </span>
+              </div>
+              <div className="flex items-center gap-1 bg-[#FAF9F6] p-1 rounded-xl border border-[#E8E6E1]">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('3D')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    viewMode === '3D'
+                      ? 'bg-[#4F6F52] text-white shadow-2xs'
+                      : 'text-[#2C3333]/70 hover:text-[#2C3333]'
+                  }`}
+                  id="btn-viewmode-3d"
+                >
+                  <span>3D Interactive View</span>
+                  <span className="text-[9px] bg-white/20 px-1.5 py-0.2 rounded-full uppercase">3D</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('2D')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    viewMode === '2D'
+                      ? 'bg-[#4F6F52] text-white shadow-2xs'
+                      : 'text-[#2C3333]/70 hover:text-[#2C3333]'
+                  }`}
+                  id="btn-viewmode-2d"
+                >
+                  <span>2D Blueprint</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Render 3D Floor Plan or 2D Blueprint Component */}
+            {viewMode === '3D' ? (
+              <Restaurant3DFloorPlan
+                floors={floors}
+                activeFloorId={activeFloorId}
+                onSelectFloor={(fId) => setActiveFloorId(fId)}
+                tables={activeTables}
+                selectedTableId={selectedTable?.id || null}
+                onSelectTable={(table) => setSelectedTable(table)}
+                getTableStatus={getTableCurrentState}
+                date={date}
+                timeSlot={timeSlot}
+                guests={guests}
+                seatingPreference={seatingPreference}
+                smartMatch={smartMatchResult}
+                onApplySmartMatch={handleApplySmartMatch}
+                isAdminView={false}
+              />
+            ) : (
+              <InteractiveFloorPlan
+                tables={activeTables}
+                selectedTableId={selectedTable?.id || null}
+                onSelectTable={(table) => setSelectedTable(table)}
+                date={date}
+                timeSlot={timeSlot}
+                guests={guests}
+                seatingPreference={seatingPreference}
+                getTableStatus={getTableCurrentState}
+                smartMatch={smartMatchResult}
+                onApplySmartMatch={handleApplySmartMatch}
+                onOpenNotifyMe={() => onOpenNotifyMe(restaurant, date, timeSlot, guests, seatingPreference)}
+              />
+            )}
 
             {/* Bottom Action Strip */}
             <div className="bg-white p-5 rounded-3xl border border-[#E8E6E1] flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">

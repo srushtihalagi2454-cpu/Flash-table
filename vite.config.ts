@@ -1715,6 +1715,7 @@ function appsScriptAuthProxyPlugin(): Plugin {
 
 export default defineConfig(() => {
   return {
+    base: './',
     plugins: [react(), tailwindcss(), appsScriptAuthProxyPlugin()],
     resolve: {
       alias: {

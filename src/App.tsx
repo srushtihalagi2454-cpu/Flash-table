@@ -17,7 +17,7 @@ import { TravelDiningDiscovery } from './components/TravelDiningDiscovery';
 import { TravelBookingModal } from './components/TravelBookingModal';
 import { TravelRoute, BusStop } from './data/travelRoutesData';
 import { RESTAURANTS_DATA, INITIAL_RESERVATIONS, isReservationForCustomer } from './data/mockData';
-import { Restaurant, Reservation, Table, NotifyRequest, TableState, SmartArrivalState, SmartArrivalDistanceOption, UserRole, CancellationRecord, TravelFulfillmentType } from './types';
+import { Restaurant, Reservation, Table, NotifyRequest, TableState, SmartArrivalState, SmartArrivalDistanceOption, UserRole, CancellationRecord, TravelFulfillmentType, RestaurantFloor } from './types';
 import { 
   createInitialSmartArrivalState, 
   getRestaurantCoordinates,
@@ -136,6 +136,18 @@ export default function App() {
     );
     setBookingRestaurant((prev) =>
       prev && prev.id === restaurantId ? { ...prev, tables: updatedTables } : prev
+    );
+  };
+
+  const handleUpdateRestaurantFloors = (restaurantId: string, updatedFloors: RestaurantFloor[]) => {
+    setRestaurants((prev) =>
+      prev.map((r) => (r.id === restaurantId ? { ...r, floors: updatedFloors } : r))
+    );
+    setActiveDashboardRestaurant((prev) =>
+      prev.id === restaurantId ? { ...prev, floors: updatedFloors } : prev
+    );
+    setBookingRestaurant((prev) =>
+      prev && prev.id === restaurantId ? { ...prev, floors: updatedFloors } : prev
     );
   };
 
@@ -1079,6 +1091,7 @@ export default function App() {
                   onSignOut={handleSignOut}
                   onSyncReservations={handleSyncReservations}
                   onUpdateRestaurantTables={handleUpdateRestaurantTables}
+                  onUpdateRestaurantFloors={handleUpdateRestaurantFloors}
                   onUpdateRestaurantDetails={handleUpdateRestaurantDetails}
                 />
               ) : (
@@ -1159,6 +1172,7 @@ export default function App() {
                 onSignOut={handleSignOut}
                 onSyncReservations={handleSyncReservations}
                 onUpdateRestaurantTables={handleUpdateRestaurantTables}
+                onUpdateRestaurantFloors={handleUpdateRestaurantFloors}
                 onUpdateRestaurantDetails={handleUpdateRestaurantDetails}
               />
             )}

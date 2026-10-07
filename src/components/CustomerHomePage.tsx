@@ -847,10 +847,15 @@ export const CustomerHomePage: React.FC<CustomerHomePageProps> = ({
                       </div>
                     )}
 
-                    {/* Live Available Tables Chip */}
-                    <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-xs text-white px-2.5 py-1 rounded-full text-[11px] font-medium flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                      <span>{suitableTables.length} tables open</span>
+                    {/* Live Available Tables Chip & 3D Floor Indicator */}
+                    <div className="absolute bottom-3 left-3 flex items-center gap-1.5 flex-wrap">
+                      <div className="bg-black/60 backdrop-blur-xs text-white px-2.5 py-1 rounded-full text-[11px] font-medium flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span>{suitableTables.length} tables open</span>
+                      </div>
+                      <div className="bg-[#4F6F52]/90 backdrop-blur-xs text-white px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 shadow-xs border border-white/20">
+                        <span>3D Multi-Floor</span>
+                      </div>
                     </div>
                   </div>
 

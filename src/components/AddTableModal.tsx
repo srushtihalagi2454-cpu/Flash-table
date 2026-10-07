@@ -12,12 +12,14 @@ import {
   HelpCircle,
   Loader2
 } from 'lucide-react';
-import { Table, TableShape, TableState } from '../types';
+import { Table, TableShape, TableState, TableCategory, RestaurantFloor } from '../types';
 
 interface AddTableModalProps {
   restaurantId: string;
   restaurantName: string;
   existingTables: Table[];
+  floors?: RestaurantFloor[];
+  activeFloorId?: string;
   onClose: () => void;
   onAddTable: (newTable: Table) => Promise<boolean>;
 }
@@ -50,6 +52,8 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
   restaurantId,
   restaurantName,
   existingTables,
+  floors = [],
+  activeFloorId,
   onClose,
   onAddTable,
 }) => {
@@ -69,6 +73,8 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
   }, [existingTables]);
 
   const [tableNumber, setTableNumber] = useState<string>(suggestedNumber);
+  const [selectedFloorId, setSelectedFloorId] = useState<string>(activeFloorId || floors[0]?.id || 'floor-0');
+  const [category, setCategory] = useState<TableCategory>('Standard');
   const [capacity, setCapacity] = useState<number>(4);
   const [minCapacity, setMinCapacity] = useState<number>(2);
   const [section, setSection] = useState<string>('Main Dining');
@@ -173,6 +179,7 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
     setIsSubmitting(true);
     const coords = calculateCoordinates();
     const uniqueTableId = `tbl-${restaurantId}-${cleanNum.toLowerCase().replace(/[^a-z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
+    const matchedFloor = floors.find((f) => f.id === selectedFloorId) || floors[0];
 
     const newTableObj: Table = {
       id: uniqueTableId,
@@ -183,6 +190,10 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
       minCapacity: Math.min(minCapacity, capacity),
       shape,
       section: finalSection,
+      category,
+      floorId: matchedFloor?.id,
+      floorNumber: matchedFloor?.floorNumber,
+      floorName: matchedFloor?.name,
       features: selectedFeatures.length > 0 ? selectedFeatures : ['Indoor Seating'],
       x: coords.x,
       y: coords.y,
@@ -245,6 +256,55 @@ export const AddTableModal: React.FC<AddTableModalProps> = ({
               <span>{errorMessage}</span>
             </div>
           )}
+
+          {/* Row 0: Floor Selection & Table Category */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-[#2C3333]/70 mb-1.5 flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-[#4F6F52]" />
+                <span>Restaurant Floor *</span>
+              </label>
+              {floors && floors.length > 0 ? (
+                <select
+                  value={selectedFloorId}
+                  onChange={(e) => setSelectedFloorId(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-[#FAF9F6] border border-[#E8E6E1] rounded-xl text-sm font-semibold text-[#2C3333] focus:outline-none focus:border-[#4F6F52] focus:bg-white cursor-pointer"
+                  id="select-add-table-floor"
+                >
+                  {floors.map((fl) => (
+                    <option key={fl.id} value={fl.id}>
+                      {fl.name} (Level {fl.floorNumber})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="p-2.5 bg-stone-100 rounded-xl text-xs text-stone-600 font-medium">
+                  Ground Floor (Default)
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-[#2C3333]/70 mb-1.5 flex items-center gap-1.5">
+                <Tag className="w-3.5 h-3.5 text-[#4F6F52]" />
+                <span>Table Category</span>
+              </label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value as TableCategory)}
+                className="w-full px-3.5 py-2.5 bg-[#FAF9F6] border border-[#E8E6E1] rounded-xl text-sm font-semibold text-[#2C3333] focus:outline-none focus:border-[#4F6F52] focus:bg-white cursor-pointer"
+                id="select-add-table-category"
+              >
+                <option value="Standard">Standard (General Diners)</option>
+                <option value="VIP">VIP (Premium / Butler Service)</option>
+                <option value="Family">Family (Large Dining Party)</option>
+                <option value="Couple">Couple (Romantic 2-Seater)</option>
+                <option value="Private">Private (Curtained Alcove)</option>
+                <option value="Outdoor">Outdoor / Garden Deck</option>
+                <option value="Bar">Bar / Cocktail Lounge</option>
+              </select>
+            </div>
+          </div>
 
           {/* Row 1: Table Number & Initial Status */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
