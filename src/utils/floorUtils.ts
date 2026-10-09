@@ -1,30 +1,28 @@
 import { Restaurant, RestaurantFloor, Table } from '../types';
 
 /**
- * Standard default floors generator
+ * Standard default floors generator matching specification:
+ * If count = 3: Ground Floor, Floor 1, Floor 2
+ * If count = 5: Ground Floor, Floor 1, Floor 2, Floor 3, Floor 4
  */
 export function getDefaultFloors(count = 2): RestaurantFloor[] {
-  const floorNames = [
-    'Ground Floor',
-    '1st Floor',
-    '2nd Floor',
-    '3rd Floor',
-    '4th Floor',
-    '5th Floor',
-    '6th Floor',
-    '7th Floor',
-    '8th Floor',
-    '9th Floor',
-  ];
-
   const result: RestaurantFloor[] = [];
-  for (let i = 0; i < count; i++) {
+  const safeCount = Math.max(1, Math.min(20, count));
+
+  for (let i = 0; i < safeCount; i++) {
+    const floorName = i === 0 ? 'Ground Floor' : `Floor ${i}`;
     result.push({
       id: `floor-${i}`,
       floorNumber: i,
-      name: floorNames[i] || `${i}th Floor`,
-      description: i === 0 ? 'Main dining hall & courtyard' : i === 1 ? 'Mezzanine & private lounges' : `Level ${i} dining space`,
+      name: floorName,
+      description: i === 0 ? 'Main dining hall & courtyard' : `Level ${i} dining space`,
       order: i,
+      objects: [
+        { id: `obj-${i}-door`, floorId: `floor-${i}`, type: 'entrance', name: 'Main Entrance', x: 2, y: 48, width: 6, height: 12 },
+        { id: `obj-${i}-kitchen`, floorId: `floor-${i}`, type: 'kitchen', name: 'Kitchen & Service', x: 78, y: 12, width: 18, height: 18 },
+        { id: `obj-${i}-counter`, floorId: `floor-${i}`, type: 'counter', name: 'Host Podium & Billing', x: 12, y: 80, width: 16, height: 10 },
+        { id: `obj-${i}-washroom`, floorId: `floor-${i}`, type: 'washroom', name: 'Washrooms', x: 80, y: 78, width: 14, height: 12 },
+      ],
     });
   }
   return result;

@@ -1,6 +1,8 @@
 export type TableState = 'available' | 'selected' | 'reserved' | 'occupied' | 'cleaning' | 'unavailable' | 'inactive' | 'removed';
 
-export type UserRole = 'customer' | 'restaurant-owner';
+export type UserRole = 'customer' | 'restaurant-owner' | 'company-admin';
+
+export type SupportedLanguage = 'en' | 'kn' | 'hi' | 'ta' | 'te' | 'ml' | 'mr' | 'bn';
 
 export type SeatingPreference = 'all' | 'window' | 'booth' | 'terrace' | 'quiet' | 'bar';
 
@@ -8,12 +10,27 @@ export type TableShape = 'rect' | 'circle' | 'booth';
 
 export type TableCategory = 'Standard' | 'VIP' | 'Family' | 'Couple' | 'Private' | 'Outdoor' | 'Bar';
 
+export type FloorObjectType = 'door' | 'entrance' | 'window' | 'counter' | 'kitchen' | 'washroom' | 'bar' | 'staircase' | 'pillar';
+
+export interface FloorObject {
+  id: string;
+  floorId: string;
+  type: FloorObjectType;
+  name: string;
+  x: number; // percentage 0-100
+  y: number; // percentage 0-100
+  width: number;
+  height: number;
+  rotation?: number;
+}
+
 export interface RestaurantFloor {
   id: string;
   floorNumber: number; // 0 for Ground, 1 for 1st Floor, etc.
-  name: string; // e.g. "Ground Floor", "1st Floor", "Rooftop Terrace"
+  name: string; // e.g. "Ground Floor", "Floor 1", "Rooftop Terrace"
   description?: string;
   order: number;
+  objects?: FloorObject[];
 }
 
 export interface Table {
@@ -68,8 +85,11 @@ export interface Restaurant {
   customerCareNumber?: string;
   ownerName?: string;
   floorPlanName: string;
+  numberOfFloors?: number;
   floors?: RestaurantFloor[];
   tables: Table[];
+  isSuspended?: boolean;
+  suspensionReason?: string;
   popularDishes: string[];
   description: string;
   experienceTag?: string;
@@ -314,6 +334,73 @@ export interface Reservation {
   cancellationRecord?: CancellationRecord;
   restaurantCustomerCareNumber?: string;
   travelDetails?: TravelDetails;
+  floorId?: string;
+  floorName?: string;
+  lastUpdated?: {
+    updatedAt: string;
+    updatedBy: string; // userId or 'customer' | 'restaurant-staff' | 'company-admin'
+    updatedRole: UserRole | string;
+    fieldModified: string;
+    previousValue?: string;
+    newValue?: string;
+    reason?: string;
+  };
+}
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string; // ISO String
+  userId: string;
+  userName: string;
+  userRole: UserRole | string;
+  action: 
+    | 'booking_created' 
+    | 'booking_cancelled' 
+    | 'time_in_changed' 
+    | 'time_out_changed' 
+    | 'table_changed' 
+    | 'restaurant_details_changed' 
+    | 'account_suspended' 
+    | 'account_restored' 
+    | 'account_deleted' 
+    | 'floor_layout_saved'
+    | 'otp_requested'
+    | 'otp_verified'
+    | 'user_signin'
+    | 'user_signup';
+  entityType: 'reservation' | 'restaurant' | 'table' | 'user' | 'floor';
+  entityId: string;
+  restaurantId?: string;
+  restaurantName?: string;
+  details: string;
+  previousValue?: string;
+  newValue?: string;
+  isSuspicious?: boolean;
+  suspiciousReason?: string;
+}
+
+export interface UserAccount {
+  userId: string;
+  fullName: string;
+  email: string;
+  mobile: string;
+  phone: string;
+  role: UserRole;
+  isEmailVerified: boolean;
+  isMobileVerified: boolean;
+  isFirstTimeLogin?: boolean;
+  signupMethod?: 'email' | 'mobile';
+  passwordHash?: string;
+  failedLoginAttempts?: number;
+  lockoutUntil?: number;
+  isSuspended?: boolean;
+  isDeleted?: boolean;
+  suspendedAt?: string;
+  suspensionReason?: string;
+  createdAt: string;
+  lastLoginAt?: string;
+  preferredLanguage?: SupportedLanguage;
+  restaurantId?: string;
 }
 
 export interface CancellationRecord {
@@ -427,11 +514,13 @@ export interface UserProfile {
 export type AuthMode = 'login' | 'signup';
 
 export interface LoginFormData {
+  loginIdentifier?: string; // Email ID or Mobile Number
   email: string;
   password: string;
 }
 
 export interface SignUpFormData {
+  signupMethod: 'email' | 'mobile';
   fullName: string;
   email: string;
   mobileNumber: string;
@@ -443,9 +532,41 @@ export interface AuthValidationErrors {
   fullName?: string;
   email?: string;
   mobileNumber?: string;
+  loginIdentifier?: string;
+  otp?: string;
   password?: string;
   confirmPassword?: string;
   general?: string;
+}
+
+export interface OtpRequestResult {
+  success: boolean;
+  message: string;
+  destinationMasked: string;
+  expiresInSeconds: number;
+  cooldownSeconds: number;
+  serviceConfigured: boolean;
+  missingConfigurationNotice?: string;
+  testDeliveryCode?: string; // Available in development/test sandbox per rule 8
+  errors?: AuthValidationErrors;
+}
+
+export interface OtpVerificationResult {
+  success: boolean;
+  message: string;
+  verified: boolean;
+  verificationToken?: string;
+  attemptsRemaining?: number;
+  isExpired?: boolean;
+  errors?: AuthValidationErrors;
+}
+
+export interface AdminSetupFormData {
+  masterKey: string;
+  fullName: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
 }
 
 export interface MockCustomer {

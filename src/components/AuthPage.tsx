@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Mail, 
   Lock, 
@@ -12,34 +12,63 @@ import {
   Sparkles, 
   ShieldCheck, 
   Armchair, 
-  ArrowRight,
-  Send,
-  Compass,
-  Store,
-  Check,
-  Building2,
-  MapPin,
-  Utensils,
-  X
+  ArrowRight, 
+  Send, 
+  Compass, 
+  Store, 
+  Check, 
+  Building2, 
+  MapPin, 
+  Utensils, 
+  X,
+  Smartphone,
+  ShieldAlert,
+  Clock,
+  KeyRound,
+  RotateCcw
 } from 'lucide-react';
-import { AuthMode, LoginFormData, SignUpFormData, AuthValidationErrors, UserRole, Restaurant } from '../types';
+import { 
+  AuthMode, 
+  LoginFormData, 
+  SignUpFormData, 
+  AuthValidationErrors, 
+  UserRole, 
+  Restaurant,
+  OtpRequestResult 
+} from '../types';
 import { 
   validateLoginForm, 
   validateSignUpForm, 
   submitSignIn, 
   submitSignUp, 
-  submitPasswordReset,
+  requestOtp,
+  verifyOtp,
+  resetPasswordWithOtp,
   accessDemoRestaurant,
-  getStoredSession,
-  saveStoredSession
+  getStoredSession, 
+  saveStoredSession,
+  maskIdentifier,
+  EMAIL_REGEX,
+  INDIAN_PHONE_REGEX
 } from '../services/authService';
 import { RESTAURANTS_DATA } from '../data/mockData';
+import { OtpVerificationModal } from './OtpVerificationModal';
+import { FirstTimeWelcomeModal } from './FirstTimeWelcomeModal';
+import { CompanyAdminSetupModal } from './CompanyAdminSetupModal';
 
 interface AuthPageProps {
   initialMode?: AuthMode;
   onNavigateHome: () => void;
   onAuthSuccess: (
-    userSummary?: { userId?: string; fullName?: string; email: string; mobileNumber?: string; phone?: string; restaurantId?: string },
+    userSummary?: { 
+      userId?: string; 
+      fullName?: string; 
+      email: string; 
+      mobileNumber?: string; 
+      phone?: string; 
+      restaurantId?: string;
+      isFirstTimeLogin?: boolean;
+    },
     selectedRole?: UserRole
   ) => void;
   onModeChange?: (mode: AuthMode) => void;
@@ -53,13 +82,18 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 }) => {
   const [mode, setMode] = useState<AuthMode>(initialMode);
   
+  // Registration option: Option 1 (Email) vs Option 2 (Mobile Number)
+  const [signupMethod, setSignupMethod] = useState<'email' | 'mobile'>('email');
+
   // Form States
   const [loginData, setLoginData] = useState<LoginFormData>({
+    loginIdentifier: '',
     email: '',
     password: '',
   });
 
   const [signUpData, setSignUpData] = useState<SignUpFormData>({
+    signupMethod: 'email',
     fullName: '',
     email: '',
     mobileNumber: '',
@@ -75,20 +109,37 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
 
-  // Role Selection State: 'customer' or 'restaurant-owner'
+  // Role Selection State: 'customer' or 'restaurant-owner' or 'company-admin'
   const [selectedRole, setSelectedRole] = useState<UserRole>('customer');
   
-  // Success redirect state
-  const [submissionFeedback, setSubmissionFeedback] = useState<{
-    type: 'success' | 'info';
-    message: string;
-  } | null>(null);
+  // Brute-force lockout countdown timer (e.g., 60 seconds after 5 failed attempts)
+  const [lockoutRemaining, setLockoutRemaining] = useState<number>(0);
 
-  // Forgot password modal state
+  // OTP Verification Modal State
+  const [isOtpModalOpen, setIsOtpModalOpen] = useState<boolean>(false);
+  const [pendingOtpDestination, setPendingOtpDestination] = useState<string>('');
+  const [pendingOtpType, setPendingOtpType] = useState<'email' | 'mobile'>('email');
+  const [initialOtpResult, setInitialOtpResult] = useState<OtpRequestResult | null>(null);
+
+  // First-Time Welcome Modal State (Requirement 4)
+  const [firstTimeModalOpen, setFirstTimeModalOpen] = useState<boolean>(false);
+  const [firstTimeUserData, setFirstTimeUserData] = useState<any>(null);
+
+  // Company Admin Setup Modal State
+  const [isAdminSetupModalOpen, setIsAdminSetupModalOpen] = useState<boolean>(false);
+
+  // Forgot password flow state
   const [isForgotModalOpen, setIsForgotModalOpen] = useState<boolean>(false);
-  const [forgotEmail, setForgotEmail] = useState<string>('');
+  const [forgotStep, setForgotStep] = useState<'request' | 'verify' | 'new_password'>('request');
+  const [forgotIdentifier, setForgotIdentifier] = useState<string>('');
+  const [forgotOtp, setForgotOtp] = useState<string>('');
+  const [forgotToken, setForgotToken] = useState<string>('');
+  const [forgotNewPassword, setForgotNewPassword] = useState<string>('');
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState<string>('');
   const [forgotStatus, setForgotStatus] = useState<{ success?: boolean; message?: string } | null>(null);
   const [isForgotLoading, setIsForgotLoading] = useState<boolean>(false);
+  const [forgotCooldown, setForgotCooldown] = useState<number>(0);
+  const [forgotDevCode, setForgotDevCode] = useState<string | undefined>(undefined);
 
   // Demo Restaurant Access State (rest-1 to rest-10)
   const [demoRestaurantId, setDemoRestaurantId] = useState<string>('');
@@ -97,14 +148,25 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
   // Restaurant Selection state for Rohan / Owner Login
   const [showRestaurantPicker, setShowRestaurantPicker] = useState<boolean>(false);
-  const [pendingOwnerUser, setPendingOwnerUser] = useState<{
-    userId?: string;
-    fullName?: string;
-    email: string;
-    mobileNumber?: string;
-    phone?: string;
-    restaurantId?: string;
-  } | null>(null);
+  const [pendingOwnerUser, setPendingOwnerUser] = useState<any>(null);
+
+  // Lockout timer effect
+  useEffect(() => {
+    if (lockoutRemaining <= 0) return;
+    const timer = setInterval(() => {
+      setLockoutRemaining((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [lockoutRemaining]);
+
+  // Forgot password cooldown effect
+  useEffect(() => {
+    if (forgotCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setForgotCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [forgotCooldown]);
 
   const handleSelectOwnerRestaurant = (restaurant: Restaurant) => {
     const finalSummary = {
@@ -129,17 +191,30 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     setMode(newMode);
     setErrors({});
     setTouched({});
-    setSubmissionFeedback(null);
     if (onModeChange) onModeChange(newMode);
   };
 
-  // Login input change
-  const handleLoginChange = (field: keyof LoginFormData, value: string) => {
-    setLoginData((prev) => ({ ...prev, [field]: value }));
-    if (errors[field] || errors.general) {
-      setErrors((prev) => ({ ...prev, [field]: undefined, general: undefined }));
+  // Login identifier change
+  const handleLoginIdentifierChange = (value: string) => {
+    setLoginData((prev) => ({ 
+      ...prev, 
+      loginIdentifier: value,
+      email: value.includes('@') ? value : '' 
+    }));
+    if (errors.loginIdentifier || errors.general) {
+      setErrors((prev) => ({ ...prev, loginIdentifier: undefined, general: undefined }));
     }
   };
+
+  // Identify whether login identifier is Email or Mobile
+  const loginIdentifierType = React.useMemo(() => {
+    const trimmed = (loginData.loginIdentifier || '').trim();
+    if (!trimmed) return null;
+    if (trimmed.includes('@')) return 'email';
+    const digitsOnly = trimmed.replace(/\D/g, '');
+    if (digitsOnly.length >= 7) return 'mobile';
+    return null;
+  }, [loginData.loginIdentifier]);
 
   // Sign up input change
   const handleSignUpChange = (field: keyof SignUpFormData, value: string) => {
@@ -162,7 +237,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         [field]: validation[field as keyof AuthValidationErrors],
       }));
     } else {
-      const validation = validateSignUpForm(signUpData);
+      const currentSignUpData = { ...signUpData, signupMethod };
+      const validation = validateSignUpForm(currentSignUpData);
       setErrors((prev) => ({
         ...prev,
         [field]: validation[field as keyof AuthValidationErrors],
@@ -173,51 +249,63 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   // Form Submit Handler
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (lockoutRemaining > 0) return;
     setIsSubmitting(true);
-    setSubmissionFeedback(null);
 
     if (mode === 'login') {
       const validationErrors = validateLoginForm(loginData);
       if (Object.keys(validationErrors).length > 0) {
         setErrors({
           ...validationErrors,
-          general: 'Invalid email or password.',
+          general: validationErrors.loginIdentifier || validationErrors.password || 'Please enter valid login credentials.',
         });
-        setTouched({ email: true, password: true });
+        setTouched({ loginIdentifier: true, password: true });
         setIsSubmitting(false);
         return;
       }
 
       try {
         const result = await submitSignIn(loginData, selectedRole);
-        if (result.success) {
-          setIsSubmitting(false);
-          if (selectedRole === 'restaurant-owner' && !result.userSummary?.restaurantId) {
+        setIsSubmitting(false);
+
+        if (result.success && result.userSummary) {
+          // If first-time login flag is set on account, display first-time welcome message
+          if (result.isFirstTimeLogin) {
+            setFirstTimeUserData(result.userSummary);
+            setFirstTimeModalOpen(true);
+            return;
+          }
+
+          if (selectedRole === 'restaurant-owner' && !result.userSummary.restaurantId) {
             setPendingOwnerUser(result.userSummary || {
-              email: loginData.email,
-              fullName: loginData.email.toLowerCase().includes('rohan') ? 'Rohan' : 'Restaurant Owner',
+              email: loginData.loginIdentifier,
+              fullName: loginData.loginIdentifier?.toLowerCase().includes('rohan') ? 'Rohan' : 'Restaurant Owner',
             });
             setShowRestaurantPicker(true);
             return;
           }
+
           onAuthSuccess(result.userSummary, selectedRole);
         } else {
-          setErrors(result.errors || { general: result.message || 'Invalid email or password.' });
-          setIsSubmitting(false);
+          if (result.message?.includes('locked')) {
+            setLockoutRemaining(60);
+          }
+          setErrors(result.errors || { general: result.message || 'Invalid email/mobile number or password.' });
         }
       } catch {
-        setErrors({ general: 'Invalid email or password.' });
+        setErrors({ general: 'Invalid email/mobile number or password.' });
         setIsSubmitting(false);
       }
     } else {
-      // Validate all required fields
-      const validationErrors = validateSignUpForm(signUpData);
+      // Sign Up Flow - Two-Step Registration & OTP Verification
+      const currentSignUpData = { ...signUpData, signupMethod };
+      const validationErrors = validateSignUpForm(currentSignUpData);
       if (Object.keys(validationErrors).length > 0) {
         setErrors(validationErrors);
         setTouched({
           fullName: true,
-          email: true,
-          mobileNumber: true,
+          email: signupMethod === 'email',
+          mobileNumber: signupMethod === 'mobile',
           password: true,
           confirmPassword: true,
         });
@@ -225,55 +313,177 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         return;
       }
 
+      const targetDestination = signupMethod === 'email' ? signUpData.email.trim() : signUpData.mobileNumber.trim();
+      setPendingOtpDestination(targetDestination);
+      setPendingOtpType(signupMethod);
+
       try {
-        const result = await submitSignUp(signUpData, selectedRole);
-        if (result.success) {
-          setIsSubmitting(false);
-          onAuthSuccess(result.userSummary, selectedRole);
+        // Request Real OTP
+        const otpRes = await requestOtp(targetDestination, signupMethod, 'signup');
+        setIsSubmitting(false);
+
+        if (otpRes.success) {
+          setInitialOtpResult(otpRes);
+          setIsOtpModalOpen(true);
         } else {
-          setErrors(result.errors || { general: result.message });
-          setIsSubmitting(false);
+          setErrors({ general: otpRes.message || 'Unable to request verification code.' });
         }
       } catch {
-        setErrors({ general: 'An unexpected error occurred. Please try again.' });
         setIsSubmitting(false);
+        setErrors({ general: 'Unable to reach verification service. Please try again.' });
       }
     }
   };
 
-  // Forgot password submit
-  const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsForgotLoading(true);
-    setForgotStatus(null);
+  // Callback when OTP verification succeeds during signup
+  const handleOtpVerified = async (verificationToken: string) => {
+    setIsOtpModalOpen(false);
+    setIsSubmitting(true);
 
-    const res = await submitPasswordReset(forgotEmail);
-    setIsForgotLoading(false);
-    setForgotStatus(res);
+    try {
+      const currentSignUpData = { ...signUpData, signupMethod };
+      const res = await submitSignUp(currentSignUpData, selectedRole, verificationToken);
+      setIsSubmitting(false);
+
+      if (res.success && res.userSummary) {
+        // Display First-Time Registration & Login Success Message (Requirement 4)
+        setFirstTimeUserData(res.userSummary);
+        setFirstTimeModalOpen(true);
+      } else {
+        setErrors({ general: res.message || 'Account registration could not be completed.' });
+      }
+    } catch {
+      setIsSubmitting(false);
+      setErrors({ general: 'Account registration failed. Please try again.' });
+    }
   };
 
-  // Quick Demo Access Login using the real live backend login API
+  // Proceed after First-Time Welcome Modal
+  const handleProceedFromWelcome = () => {
+    setFirstTimeModalOpen(false);
+    if (firstTimeUserData) {
+      onAuthSuccess(firstTimeUserData, selectedRole);
+    } else {
+      onNavigateHome();
+    }
+  };
+
+  // Forgot password Step 1: Send OTP
+  const handleForgotRequestOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotIdentifier.trim()) {
+      setForgotStatus({ success: false, message: 'Please enter your registered Email ID or Mobile Number.' });
+      return;
+    }
+
+    const isEmail = forgotIdentifier.includes('@');
+    const type: 'email' | 'mobile' = isEmail ? 'email' : 'mobile';
+
+    setIsForgotLoading(true);
+    setForgotStatus(null);
+    try {
+      const res = await requestOtp(forgotIdentifier.trim(), type, 'forgot_password');
+      setIsForgotLoading(false);
+      if (res.success) {
+        setForgotStep('verify');
+        setForgotCooldown(res.cooldownSeconds || 30);
+        setForgotDevCode(res.testDeliveryCode);
+        setForgotStatus({
+          success: true,
+          message: `Verification code sent to ${res.destinationMasked}.`,
+        });
+      } else {
+        setForgotStatus({ success: false, message: res.message || 'Unable to dispatch verification code.' });
+      }
+    } catch {
+      setIsForgotLoading(false);
+      setForgotStatus({ success: false, message: 'Unable to connect to verification server.' });
+    }
+  };
+
+  // Forgot password Step 2: Verify OTP
+  const handleForgotVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotOtp.trim() || forgotOtp.trim().length !== 6) {
+      setForgotStatus({ success: false, message: 'Please enter the 6-digit verification code.' });
+      return;
+    }
+
+    setIsForgotLoading(true);
+    setForgotStatus(null);
+    try {
+      const res = await verifyOtp(forgotIdentifier.trim(), forgotOtp.trim(), 'forgot_password');
+      setIsForgotLoading(false);
+      if (res.success && res.verificationToken) {
+        setForgotToken(res.verificationToken);
+        setForgotStep('new_password');
+        setForgotStatus({ success: true, message: 'Code verified! Please enter your new password.' });
+      } else {
+        setForgotStatus({ success: false, message: res.message || 'Invalid verification code.' });
+      }
+    } catch {
+      setIsForgotLoading(false);
+      setForgotStatus({ success: false, message: 'Verification error. Please try again.' });
+    }
+  };
+
+  // Forgot password Step 3: Update Password
+  const handleForgotSubmitNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotNewPassword || forgotNewPassword.length < 6) {
+      setForgotStatus({ success: false, message: 'New password must be at least 6 characters.' });
+      return;
+    }
+    if (forgotNewPassword !== forgotConfirmPassword) {
+      setForgotStatus({ success: false, message: 'Passwords do not match.' });
+      return;
+    }
+
+    setIsForgotLoading(true);
+    setForgotStatus(null);
+    try {
+      const res = await resetPasswordWithOtp(forgotIdentifier.trim(), forgotToken, forgotNewPassword);
+      setIsForgotLoading(false);
+      if (res.success) {
+        setForgotStatus({ success: true, message: 'Password reset successful! Please log in.' });
+        setTimeout(() => {
+          setIsForgotModalOpen(false);
+          setForgotStep('request');
+          setForgotIdentifier('');
+          setForgotOtp('');
+          setForgotNewPassword('');
+          setForgotConfirmPassword('');
+          setLoginData((prev) => ({ ...prev, loginIdentifier: forgotIdentifier.trim(), password: '' }));
+        }, 1500);
+      } else {
+        setForgotStatus({ success: false, message: res.message || 'Failed to update password.' });
+      }
+    } catch {
+      setIsForgotLoading(false);
+      setForgotStatus({ success: false, message: 'Network error. Please try again.' });
+    }
+  };
+
+  // Quick Demo Access Login
   const handleDemoLogin = async (role: 'customer' | 'restaurant-owner') => {
     if (isSubmitting || demoLoading !== null) return;
     setDemoLoading(role);
     setErrors({});
-    setSubmissionFeedback(null);
 
     const demoCredentials = role === 'customer'
-      ? { email: 'sanket@gmail.com', password: 'sanket2006', role: 'customer' as UserRole }
-      : { email: 'rohan@gmail.com', password: 'rohan2006', role: 'restaurant-owner' as UserRole };
+      ? { identifier: 'sanket@gmail.com', password: 'sanket2006', role: 'customer' as UserRole }
+      : { identifier: 'rohan@gmail.com', password: 'rohan2006', role: 'restaurant-owner' as UserRole };
 
-    // Update input fields for visual continuity
     setLoginData({
-      email: demoCredentials.email,
+      loginIdentifier: demoCredentials.identifier,
+      email: demoCredentials.identifier,
       password: demoCredentials.password,
     });
     setSelectedRole(demoCredentials.role);
 
     try {
-      // Calls the same live backend authentication function
       const result = await submitSignIn(
-        { email: demoCredentials.email, password: demoCredentials.password },
+        { loginIdentifier: demoCredentials.identifier, email: demoCredentials.identifier, password: demoCredentials.password },
         demoCredentials.role
       );
 
@@ -281,7 +491,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         setDemoLoading(null);
         if (demoCredentials.role === 'restaurant-owner') {
           setPendingOwnerUser(result.userSummary || {
-            email: demoCredentials.email,
+            email: demoCredentials.identifier,
             fullName: 'Rohan',
           });
           setShowRestaurantPicker(true);
@@ -289,16 +499,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         }
         onAuthSuccess(result.userSummary, demoCredentials.role);
       } else {
-        setErrors(result.errors || { general: result.message || 'Demo login failed. Please try again.' });
+        setErrors(result.errors || { general: result.message || 'Demo login failed.' });
         setDemoLoading(null);
       }
     } catch {
-      setErrors({ general: 'An unexpected authentication error occurred.' });
+      setErrors({ general: 'Authentication error occurred.' });
       setDemoLoading(null);
     }
   };
 
-  // Demo Restaurant Access Handler for evaluating any of the 10 permanent partner restaurants
+  // Demo Restaurant Access Handler (rest-1 to rest-10)
   const handleDemoRestaurantAccess = (idToUse?: string) => {
     if (isSubmitting || demoRestaurantLoading) return;
     const rawId = idToUse !== undefined ? idToUse : demoRestaurantId;
@@ -316,173 +526,171 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     setDemoRestaurantLoading(false);
 
     if (result.success && result.userSummary) {
-      // Synchronize role state
       setSelectedRole('restaurant-owner');
       onAuthSuccess(result.userSummary, 'restaurant-owner');
     } else {
-      setDemoRestaurantError(
-        result.message || `Invalid Restaurant ID "${trimmedId}". Valid IDs are rest-1 through rest-10.`
-      );
+      setDemoRestaurantError(result.message || 'Invalid Restaurant ID.');
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6] text-[#2C3333] flex flex-col justify-between">
+    <div className="min-h-screen bg-[#FAF9F6] flex flex-col justify-between selection:bg-[#4F6F521A] selection:text-[#4F6F52]">
       
       {/* Top Navigation Bar */}
-      <header className="border-b border-[#E8E6E1] bg-white/70 backdrop-blur-md sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
-          
-          {/* Logo with Home Link */}
+      <header className="w-full bg-[#FAF9F6]/80 backdrop-blur-md border-b border-[#E8E6E1] py-4 px-4 sm:px-8 sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
           <button 
             onClick={onNavigateHome}
-            className="flex items-center gap-3 group text-left cursor-pointer focus:outline-none"
-            id="auth-brand-logo-btn"
+            className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#2C3333]/80 hover:text-[#4F6F52] transition-colors cursor-pointer group"
+            id="auth-back-to-home-btn"
           >
-            <div className="w-9 h-9 rounded-xl bg-[#4F6F52] flex items-center justify-center text-white shadow-sm group-hover:bg-[#3D5A40] transition-colors">
-              <div className="relative flex items-center justify-center">
-                <div className="w-3.5 h-3.5 border-2 border-white rounded-[3px] bg-white/10 flex items-center justify-center">
-                  <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                </div>
-                <div className="absolute -top-1 w-2.5 h-0.5 bg-white/80 rounded-full" />
-                <div className="absolute -bottom-1 w-2.5 h-0.5 bg-white/80 rounded-full" />
-              </div>
-            </div>
-            <div>
-              <div className="text-2xl font-bold tracking-tight text-[#4F6F52] font-display flex items-center gap-1.5">
-                Flash<span className="text-[#2C3333]">Table</span>
-                <span className="text-[9px] font-bold uppercase tracking-[0.2em] px-1.5 py-0.5 bg-[#4F6F521A] text-[#4F6F52] rounded-sm">IN</span>
-              </div>
-            </div>
+            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+            <span>Back to Discovery</span>
           </button>
 
-          {/* Return to Home link */}
-          <button
+          <div 
             onClick={onNavigateHome}
-            className="text-xs font-semibold text-[#2C3333]/70 hover:text-[#4F6F52] flex items-center gap-2 py-2 px-3.5 rounded-full hover:bg-white border border-transparent hover:border-[#E8E6E1] transition-all cursor-pointer"
-            id="auth-return-home-btn"
+            className="flex items-center gap-2 cursor-pointer"
           >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Return to Restaurants</span>
-          </button>
+            <div className="w-8 h-8 rounded-full bg-[#4F6F52] text-white flex items-center justify-center font-bold text-sm shadow-xs">
+              ⚡
+            </div>
+            <span className="font-serif text-lg font-bold tracking-tight text-[#2C3333]">
+              Flash<span className="text-[#4F6F52]">Table</span>
+            </span>
+          </div>
+
+          <div className="text-xs text-[#2C3333]/60 hidden sm:block font-medium">
+            Table Reservations & Dining Security
+          </div>
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 py-10 sm:py-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full flex items-center justify-center">
-        <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-10 items-stretch">
+      {/* Main Authentication Container */}
+      <main className="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-8">
+        <div className="w-full max-w-xl">
           
-          {/* Main Form Column (7 cols on lg) */}
-          <div className="lg:col-span-7 flex flex-col justify-center">
-            <div className="bg-white rounded-3xl border border-[#E8E6E1] shadow-sm p-6 sm:p-10 md:p-12 relative overflow-hidden">
+          <div className="bg-white rounded-3xl border border-[#E8E6E1] shadow-xl overflow-hidden">
+            
+            {/* Header Tab Switcher */}
+            <div className="grid grid-cols-2 border-b border-[#E8E6E1] bg-[#FAF9F6]/50 p-1.5">
+              <button
+                type="button"
+                onClick={() => handleSwitchMode('login')}
+                className={`py-3 rounded-2xl text-xs sm:text-sm font-bold uppercase tracking-wider transition-all duration-200 cursor-pointer ${
+                  mode === 'login'
+                    ? 'bg-white text-[#4F6F52] shadow-sm border border-[#E8E6E1]'
+                    : 'text-[#2C3333]/60 hover:text-[#2C3333] hover:bg-white/60'
+                }`}
+                id="tab-login"
+              >
+                Log In
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSwitchMode('signup')}
+                className={`py-3 rounded-2xl text-xs sm:text-sm font-bold uppercase tracking-wider transition-all duration-200 cursor-pointer ${
+                  mode === 'signup'
+                    ? 'bg-white text-[#4F6F52] shadow-sm border border-[#E8E6E1]'
+                    : 'text-[#2C3333]/60 hover:text-[#2C3333] hover:bg-white/60'
+                }`}
+                id="tab-signup"
+              >
+                Sign Up
+              </button>
+            </div>
+
+            <div className="p-6 sm:p-8">
               
-              {/* Subtle accent line */}
-              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#4F6F52] via-[#4F6F52]/60 to-[#FAF9F6]" />
-
-
-
-                  {/* Mode switch tabs */}
-                  <div className="flex items-center gap-2 p-1 bg-[#FAF9F6] border border-[#E8E6E1] rounded-full w-fit mb-8">
-                    <button
-                      type="button"
-                      onClick={() => handleSwitchMode('login')}
-                      className={`px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                        mode === 'login'
-                          ? 'bg-white text-[#2C3333] shadow-xs'
-                          : 'text-[#2C3333]/60 hover:text-[#2C3333]'
-                      }`}
-                      id="auth-tab-login"
-                    >
-                      Sign In
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSwitchMode('signup')}
-                      className={`px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                        mode === 'signup'
-                          ? 'bg-white text-[#2C3333] shadow-xs'
-                          : 'text-[#2C3333]/60 hover:text-[#2C3333]'
-                      }`}
-                      id="auth-tab-signup"
-                    >
-                      Sign Up
-                    </button>
-                  </div>
-
-              {/* Form Header */}
-              <div className="mb-8">
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-7 h-7 rounded-lg bg-[#4F6F521A] text-[#4F6F52] flex items-center justify-center">
-                    <Sparkles className="w-4 h-4" />
-                  </div>
-                  <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#4F6F52]">
-                    {mode === 'login' ? 'Diner Access' : 'New Member Registration'}
-                  </span>
-                </div>
-
-                <h1 className="text-3xl sm:text-4xl font-bold font-serif text-[#2C3333] tracking-tight">
-                  {mode === 'login' ? 'Welcome back' : 'Create your FlashTable account'}
+              {/* Context Title */}
+              <div className="text-center mb-6">
+                <h1 className="text-xl sm:text-2xl font-bold font-serif text-[#2C3333]">
+                  {mode === 'login' 
+                    ? (selectedRole === 'company-admin' ? 'Company Administration Portal' : 'Welcome to Flash Table')
+                    : 'Create Your Flash Table Account'}
                 </h1>
-                
-                <p className="text-sm text-[#2C3333]/60 mt-2 font-sans">
-                  {mode === 'login'
-                    ? 'Sign in to continue your reservation.'
-                    : 'Reserve exact tables, unlock smart arrival, and enjoy priority table alerts across Bengaluru.'}
+                <p className="text-xs sm:text-sm text-[#2C3333]/60 mt-1">
+                  {mode === 'login' 
+                    ? 'Log in using your registered Email ID or Mobile Number and password'
+                    : 'Choose your registration option and verify your contact details'}
                 </p>
               </div>
 
-              {/* Success / Status Banner */}
-              {submissionFeedback && (
-                <div className="mb-6 p-4 rounded-2xl bg-[#4F6F521A] border border-[#4F6F52]/30 flex items-center gap-3 text-xs font-semibold text-[#4F6F52] animate-in fade-in">
-                  <CheckCircle2 className="w-5 h-5 shrink-0" />
-                  <span>{submissionFeedback.message}</span>
-                </div>
-              )}
-
               {/* General Error Banner */}
               {errors.general && (
-                <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 flex items-center gap-3 text-xs font-semibold text-rose-700 animate-in fade-in">
-                  <AlertCircle className="w-5 h-5 shrink-0" />
+                <div className="mb-5 p-3.5 rounded-2xl bg-rose-50 border border-rose-200 flex items-center gap-2.5 text-xs font-semibold text-rose-700 animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
                   <span>{errors.general}</span>
                 </div>
               )}
 
-              {/* ===================== LOGIN FORM ===================== */}
+              {/* Brute-force Lockout Warning Banner */}
+              {lockoutRemaining > 0 && (
+                <div className="mb-5 p-3.5 rounded-2xl bg-amber-50 border border-amber-200 flex items-center gap-2.5 text-xs font-bold text-amber-900 animate-in fade-in">
+                  <Clock className="w-4 h-4 shrink-0 text-amber-700" />
+                  <span>Account temporarily locked due to 5 consecutive failed attempts. Please wait {lockoutRemaining} seconds.</span>
+                </div>
+              )}
+
+              {/* ============================================================== */}
+              {/* ======================== LOGIN FORM ========================== */}
+              {/* ============================================================== */}
               {mode === 'login' && (
-                <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5" noValidate>
+                <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                   
-                  {/* Email Field */}
+                  {/* Email ID or Mobile Number Field (Requirement 5) */}
                   <div className="space-y-1.5">
-                    <label 
-                      htmlFor="login-email" 
-                      className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80"
-                    >
-                      Email
-                    </label>
+                    <div className="flex items-center justify-between">
+                      <label 
+                        htmlFor="login-identifier" 
+                        className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80"
+                      >
+                        Email ID or Mobile Number <span className="text-rose-500">*</span>
+                      </label>
+
+                      {/* Real-time contact type identification badge */}
+                      {loginIdentifierType === 'email' && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#4F6F52] bg-[#4F6F5214] px-2 py-0.5 rounded-md border border-[#4F6F52]/20">
+                          <Mail className="w-3 h-3" />
+                          <span>Email ID detected</span>
+                        </span>
+                      )}
+                      {loginIdentifierType === 'mobile' && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                          <Smartphone className="w-3 h-3" />
+                          <span>Mobile Number (+91)</span>
+                        </span>
+                      )}
+                    </div>
+
                     <div className="relative">
                       <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#2C3333]/40">
-                        <Mail className="w-4 h-4" />
+                        {loginIdentifierType === 'mobile' ? (
+                          <Smartphone className="w-4 h-4 text-[#4F6F52]" />
+                        ) : (
+                          <Mail className="w-4 h-4" />
+                        )}
                       </div>
                       <input
-                        id="login-email"
-                        name="email"
-                        type="email"
-                        autoComplete="email"
-                        value={loginData.email}
-                        onChange={(e) => handleLoginChange('email', e.target.value)}
-                        onBlur={() => handleBlur('email')}
-                        placeholder="name@example.com"
+                        id="login-identifier"
+                        name="loginIdentifier"
+                        type="text"
+                        autoComplete="username"
+                        value={loginData.loginIdentifier}
+                        onChange={(e) => handleLoginIdentifierChange(e.target.value)}
+                        onBlur={() => handleBlur('loginIdentifier')}
+                        placeholder="e.g. name@example.com or 9845012260"
                         className={`w-full pl-10 pr-4 py-3 bg-[#FAF9F6] border rounded-2xl text-xs sm:text-sm text-[#2C3333] outline-none transition-all placeholder:text-[#2C3333]/30 ${
-                          errors.email
+                          errors.loginIdentifier
                             ? 'border-rose-400 bg-rose-50/20 focus:border-rose-500 ring-1 ring-rose-200'
                             : 'border-[#E8E6E1] focus:border-[#4F6F52] focus:bg-white focus:ring-1 focus:ring-[#4F6F52]/20'
                         }`}
                       />
                     </div>
-                    {errors.email && (
+                    {errors.loginIdentifier && (
                       <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1 mt-1">
                         <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                        <span>{errors.email}</span>
+                        <span>{errors.loginIdentifier}</span>
                       </p>
                     )}
                   </div>
@@ -494,13 +702,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                         htmlFor="login-password" 
                         className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80"
                       >
-                        Password
+                        Password <span className="text-rose-500">*</span>
                       </label>
                       <button
                         type="button"
                         onClick={() => {
-                          setForgotEmail(loginData.email);
+                          setForgotIdentifier(loginData.loginIdentifier || '');
                           setForgotStatus(null);
+                          setForgotStep('request');
                           setIsForgotModalOpen(true);
                         }}
                         className="text-xs text-[#4F6F52] hover:text-[#3D5A40] hover:underline font-medium cursor-pointer"
@@ -519,7 +728,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                         type={showPassword ? 'text' : 'password'}
                         autoComplete="current-password"
                         value={loginData.password}
-                        onChange={(e) => handleLoginChange('password', e.target.value)}
+                        onChange={(e) => setLoginData({ ...loginData, password: e.target.value })}
                         onBlur={() => handleBlur('password')}
                         placeholder="••••••••"
                         className={`w-full pl-10 pr-11 py-3 bg-[#FAF9F6] border rounded-2xl text-xs sm:text-sm text-[#2C3333] outline-none transition-all placeholder:text-[#2C3333]/30 ${
@@ -545,100 +754,69 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     )}
                   </div>
 
-                  {/* Role selection: "How will you use FlashTable?" */}
-                  <div className="space-y-2 pt-2">
-                    <div className="flex items-center justify-between">
-                      <label className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80">
-                        How will you use FlashTable?
-                      </label>
-                      <span className="text-[10px] text-[#2C3333]/50">Choose account type</span>
-                    </div>
+                  {/* Role selection: Customer or Restaurant Owner */}
+                  <div className="space-y-2 pt-1">
+                    <label className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80">
+                      Login Account Type
+                    </label>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {/* CUSTOMER CARD */}
+                    <div className="grid grid-cols-2 gap-3">
+                      {/* Customer Card */}
                       <div
-                        id="role-login-customer"
                         role="button"
                         tabIndex={0}
                         onClick={() => {
                           setSelectedRole('customer');
                           if (errors.general) setErrors((prev) => ({ ...prev, general: undefined }));
                         }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            setSelectedRole('customer');
-                            if (errors.general) setErrors((prev) => ({ ...prev, general: undefined }));
-                          }
-                        }}
-                        className={`p-3.5 rounded-2xl border-2 cursor-pointer transition-all text-left flex flex-col justify-between ${
+                        className={`p-3 rounded-2xl border-2 cursor-pointer transition-all text-left flex items-center justify-between ${
                           selectedRole === 'customer'
-                            ? 'border-[#4F6F52] bg-[#4F6F520A] ring-2 ring-[#4F6F52]/20 shadow-xs'
-                            : 'border-[#E8E6E1] bg-[#FAF9F6] hover:border-[#4F6F52]/40 hover:bg-white'
+                            ? 'border-[#4F6F52] bg-[#4F6F520A] ring-1 ring-[#4F6F52]/20'
+                            : 'border-[#E8E6E1] bg-[#FAF9F6] hover:bg-white'
                         }`}
+                        id="role-login-customer"
                       >
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                              selectedRole === 'customer' ? 'bg-[#4F6F52] text-white' : 'bg-[#4F6F521A] text-[#4F6F52]'
-                            }`}>
-                              <Compass className="w-4 h-4" />
-                            </div>
-                            <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-colors ${
-                              selectedRole === 'customer' ? 'border-[#4F6F52] bg-[#4F6F52] text-white' : 'border-[#E8E6E1] bg-white'
-                            }`}>
-                              {selectedRole === 'customer' && <Check className="w-2.5 h-2.5" />}
-                            </div>
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                            selectedRole === 'customer' ? 'bg-[#4F6F52] text-white' : 'bg-[#4F6F521A] text-[#4F6F52]'
+                          }`}>
+                            <Compass className="w-3.5 h-3.5" />
                           </div>
-                          <div className="text-[11px] font-bold uppercase tracking-wider text-[#4F6F52]">
-                            Customer
+                          <div>
+                            <div className="text-xs font-bold text-[#2C3333]">Customer</div>
+                            <div className="text-[10px] text-stone-500">Bookings</div>
                           </div>
-                          <p className="text-xs text-[#2C3333]/80 mt-0.5 leading-snug">
-                            Discover restaurants and reserve your perfect table.
-                          </p>
                         </div>
+                        {selectedRole === 'customer' && <Check className="w-4 h-4 text-[#4F6F52]" />}
                       </div>
 
-                      {/* RESTAURANT OWNER CARD */}
+                      {/* Restaurant Owner Card */}
                       <div
-                        id="role-login-restaurant-owner"
                         role="button"
                         tabIndex={0}
                         onClick={() => {
                           setSelectedRole('restaurant-owner');
                           if (errors.general) setErrors((prev) => ({ ...prev, general: undefined }));
                         }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            setSelectedRole('restaurant-owner');
-                            if (errors.general) setErrors((prev) => ({ ...prev, general: undefined }));
-                          }
-                        }}
-                        className={`p-3.5 rounded-2xl border-2 cursor-pointer transition-all text-left flex flex-col justify-between ${
+                        className={`p-3 rounded-2xl border-2 cursor-pointer transition-all text-left flex items-center justify-between ${
                           selectedRole === 'restaurant-owner'
-                            ? 'border-[#4F6F52] bg-[#4F6F520A] ring-2 ring-[#4F6F52]/20 shadow-xs'
-                            : 'border-[#E8E6E1] bg-[#FAF9F6] hover:border-[#4F6F52]/40 hover:bg-white'
+                            ? 'border-[#4F6F52] bg-[#4F6F520A] ring-1 ring-[#4F6F52]/20'
+                            : 'border-[#E8E6E1] bg-[#FAF9F6] hover:bg-white'
                         }`}
+                        id="role-login-restaurant-owner"
                       >
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                              selectedRole === 'restaurant-owner' ? 'bg-[#4F6F52] text-white' : 'bg-[#4F6F521A] text-[#4F6F52]'
-                            }`}>
-                              <Store className="w-4 h-4" />
-                            </div>
-                            <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-colors ${
-                              selectedRole === 'restaurant-owner' ? 'border-[#4F6F52] bg-[#4F6F52] text-white' : 'border-[#E8E6E1] bg-white'
-                            }`}>
-                              {selectedRole === 'restaurant-owner' && <Check className="w-2.5 h-2.5" />}
-                            </div>
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                            selectedRole === 'restaurant-owner' ? 'bg-[#4F6F52] text-white' : 'bg-[#4F6F521A] text-[#4F6F52]'
+                          }`}>
+                            <Store className="w-3.5 h-3.5" />
                           </div>
-                          <div className="text-[11px] font-bold uppercase tracking-wider text-[#4F6F52]">
-                            Restaurant Owner
+                          <div>
+                            <div className="text-xs font-bold text-[#2C3333]">Restaurant</div>
+                            <div className="text-[10px] text-stone-500">Partner Console</div>
                           </div>
-                          <p className="text-xs text-[#2C3333]/80 mt-0.5 leading-snug">
-                            Manage your restaurant, tables, reservations and guests.
-                          </p>
                         </div>
+                        {selectedRole === 'restaurant-owner' && <Check className="w-4 h-4 text-[#4F6F52]" />}
                       </div>
                     </div>
                   </div>
@@ -646,8 +824,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                   {/* Primary Log In Button */}
                   <button
                     type="submit"
-                    disabled={isSubmitting || demoLoading !== null}
-                    className="w-full py-3.5 px-6 rounded-full bg-[#2C3333] hover:bg-[#4F6F52] text-white text-xs font-bold uppercase tracking-widest transition-all duration-200 shadow-sm hover:shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed mt-3"
+                    disabled={isSubmitting || lockoutRemaining > 0}
+                    className="w-full py-3.5 px-6 rounded-full bg-[#2C3333] hover:bg-[#4F6F52] text-white text-xs font-bold uppercase tracking-widest transition-all duration-200 shadow-sm hover:shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed mt-2"
                     id="login-submit-btn"
                   >
                     {isSubmitting ? (
@@ -661,7 +839,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                   </button>
 
                   {/* Toggle to Sign Up */}
-                  <div className="text-center pt-3 text-xs text-[#2C3333]/70">
+                  <div className="text-center pt-2 text-xs text-[#2C3333]/70">
                     <span>Don't have an account? </span>
                     <button
                       type="button"
@@ -669,182 +847,33 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                       className="font-bold text-[#4F6F52] hover:text-[#3D5A40] hover:underline cursor-pointer"
                       id="link-to-signup"
                     >
-                      Sign up
+                      Sign up with Email or Mobile
                     </button>
                   </div>
 
-                  {/* Demo Restaurant Access: Clearly separated on Restaurant Owner Login */}
-                  {selectedRole === 'restaurant-owner' && (
-                    <div 
-                      id="section-demo-restaurant-access"
-                      className="mt-6 pt-5 pb-5 px-4 sm:px-5 rounded-2xl bg-[#FAF9F6] border border-[#E8E6E1] shadow-2xs space-y-3.5 animate-in fade-in duration-200"
-                    >
-                      <div className="flex items-center justify-between border-b border-[#E8E6E1]/70 pb-2.5">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-lg bg-[#4F6F52] text-white flex items-center justify-center">
-                            <Store className="w-3.5 h-3.5" />
-                          </div>
-                          <span className="text-xs font-bold uppercase tracking-wider text-[#2C3333]">
-                            Demo Restaurant Access
-                          </span>
-                        </div>
-                        <span className="text-[10px] font-bold tracking-wider text-[#4F6F52] bg-[#4F6F521A] px-2 py-0.5 rounded-full uppercase">
-                          rest-1 to rest-10
-                        </span>
-                      </div>
-
-                      <p className="text-xs text-[#2C3333]/70 leading-relaxed">
-                        Instant partner console evaluation: Enter any valid Restaurant ID (from <span className="font-semibold text-[#2C3333]">rest-1</span> to <span className="font-semibold text-[#2C3333]">rest-10</span>) to open that venue's complete dashboard.
-                      </p>
-
-                      <div className="space-y-2">
-                        <div className="flex flex-col sm:flex-row gap-2">
-                          <div className="relative flex-1">
-                            <input
-                              id="demo-restaurant-id-input"
-                              type="text"
-                              value={demoRestaurantId}
-                              onChange={(e) => {
-                                setDemoRestaurantId(e.target.value);
-                                setDemoRestaurantError(null);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  handleDemoRestaurantAccess();
-                                }
-                              }}
-                              placeholder="Restaurant ID (e.g. rest-2 or rest-10)"
-                              className={`w-full px-3.5 py-2.5 bg-white border rounded-xl text-xs text-[#2C3333] font-mono outline-none transition-all placeholder:font-sans placeholder:text-[#2C3333]/30 ${
-                                demoRestaurantError
-                                  ? 'border-rose-400 bg-rose-50/20 ring-1 ring-rose-200'
-                                  : 'border-[#E8E6E1] focus:border-[#4F6F52] focus:ring-1 focus:ring-[#4F6F52]/20'
-                              }`}
-                            />
-                          </div>
-
-                          <button
-                            type="button"
-                            id="demo-restaurant-access-btn"
-                            disabled={demoRestaurantLoading}
-                            onClick={() => handleDemoRestaurantAccess()}
-                            className="px-5 py-2.5 rounded-xl bg-[#4F6F52] hover:bg-[#3D5A40] text-white text-xs font-bold uppercase tracking-wider transition-all duration-150 shadow-2xs hover:shadow-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shrink-0"
-                          >
-                            {demoRestaurantLoading ? (
-                              <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                            ) : (
-                              <>
-                                <span>Access / Continue</span>
-                                <ArrowRight className="w-3.5 h-3.5" />
-                              </>
-                            )}
-                          </button>
-                        </div>
-
-                        {/* Clear error message if invalid ID */}
-                        {demoRestaurantError && (
-                          <div
-                            id="demo-restaurant-error-msg"
-                            className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-2 text-xs font-medium text-rose-700 animate-in fade-in"
-                          >
-                            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
-                            <span className="leading-snug">{demoRestaurantError}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Quick selectable test chips for the 10 permanent partner restaurants */}
-                      <div className="pt-2 border-t border-[#E8E6E1]/70">
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-[#2C3333]/50 mb-1.5 flex items-center justify-between">
-                          <span>Quick Test IDs:</span>
-                          <span className="text-[9px] font-normal text-[#2C3333]/40">Click any ID to populate</span>
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {RESTAURANTS_DATA.map((r) => {
-                            const isSelected = demoRestaurantId.trim().toLowerCase() === r.id.toLowerCase();
-                            return (
-                              <button
-                                key={r.id}
-                                type="button"
-                                onClick={() => {
-                                  setDemoRestaurantId(r.id);
-                                  setDemoRestaurantError(null);
-                                  handleDemoRestaurantAccess(r.id);
-                                }}
-                                className={`px-2 py-1 rounded-lg text-[11px] font-mono border transition-all cursor-pointer ${
-                                  isSelected
-                                    ? 'bg-[#4F6F52] text-white border-[#4F6F52] font-bold shadow-2xs'
-                                    : 'bg-white hover:bg-[#4F6F521A] text-[#2C3333]/80 border-[#E8E6E1]'
-                                }`}
-                                title={`Instant Access: ${r.id} (${r.name} · ${r.neighborhood})`}
-                              >
-                                {r.id}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Quick Demo Access for SIH Presentation */}
-                  <div className="mt-5 pt-4 border-t border-[#E8E6E1]" id="section-quick-demo-access">
-                    <div className="flex items-center justify-between mb-2.5">
-                      <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#2C3333]/70">
-                        <Sparkles className="w-3.5 h-3.5 text-[#4F6F52]" />
-                        <span>Quick Demo Access</span>
-                      </div>
-                      <span className="text-[10px] font-semibold text-[#4F6F52] bg-[#4F6F521A] px-2 py-0.5 rounded-full">
-                        SIH Presentation
+                  {/* Quick Demo Access for presentation */}
+                  <div className="mt-4 pt-3 border-t border-[#E8E6E1]">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#2C3333]/60 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 text-[#4F6F52]" /> Quick Test Logins
                       </span>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                      {/* Customer Demo Button */}
+                    <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
-                        id="btn-demo-login-sanketh"
-                        disabled={isSubmitting || demoLoading !== null}
                         onClick={() => handleDemoLogin('customer')}
-                        className="w-full py-2.5 px-3.5 rounded-xl border border-[#E8E6E1] bg-[#FAF9F6] hover:bg-white hover:border-[#4F6F52]/60 text-[#2C3333] transition-all flex items-center justify-between text-xs group cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shadow-2xs"
+                        className="py-2 px-3 rounded-xl border border-[#E8E6E1] bg-[#FAF9F6] hover:bg-white text-xs font-medium text-left flex items-center justify-between group cursor-pointer"
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-6 h-6 rounded-lg bg-[#4F6F521A] text-[#4F6F52] flex items-center justify-center shrink-0">
-                            <Compass className="w-3.5 h-3.5" />
-                          </div>
-                          <div className="text-left truncate">
-                            <div className="font-semibold text-[#2C3333] text-xs">Login as Sanketh</div>
-                            <div className="text-[10px] text-[#2C3333]/50">Customer</div>
-                          </div>
-                        </div>
-                        {demoLoading === 'customer' ? (
-                          <div className="w-3.5 h-3.5 border-2 border-[#4F6F52]/30 border-t-[#4F6F52] rounded-full animate-spin shrink-0 ml-1" />
-                        ) : (
-                          <ArrowRight className="w-3.5 h-3.5 text-[#2C3333]/30 group-hover:text-[#4F6F52] group-hover:translate-x-0.5 transition-all shrink-0 ml-1" />
-                        )}
+                        <span className="truncate">Sanket (Customer)</span>
+                        <ArrowRight className="w-3 h-3 text-stone-400 group-hover:text-[#4F6F52]" />
                       </button>
-
-                      {/* Restaurant Owner Demo Button */}
                       <button
                         type="button"
-                        id="btn-demo-login-rohan"
-                        disabled={isSubmitting || demoLoading !== null}
                         onClick={() => handleDemoLogin('restaurant-owner')}
-                        className="w-full py-2.5 px-3.5 rounded-xl border border-[#E8E6E1] bg-[#FAF9F6] hover:bg-white hover:border-[#4F6F52]/60 text-[#2C3333] transition-all flex items-center justify-between text-xs group cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shadow-2xs"
+                        className="py-2 px-3 rounded-xl border border-[#E8E6E1] bg-[#FAF9F6] hover:bg-white text-xs font-medium text-left flex items-center justify-between group cursor-pointer"
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-6 h-6 rounded-lg bg-[#4F6F521A] text-[#4F6F52] flex items-center justify-center shrink-0">
-                            <Store className="w-3.5 h-3.5" />
-                          </div>
-                          <div className="text-left truncate">
-                            <div className="font-semibold text-[#2C3333] text-xs">Login as Rohan</div>
-                            <div className="text-[10px] text-[#2C3333]/50">Restaurant Owner</div>
-                          </div>
-                        </div>
-                        {demoLoading === 'restaurant-owner' ? (
-                          <div className="w-3.5 h-3.5 border-2 border-[#4F6F52]/30 border-t-[#4F6F52] rounded-full animate-spin shrink-0 ml-1" />
-                        ) : (
-                          <ArrowRight className="w-3.5 h-3.5 text-[#2C3333]/30 group-hover:text-[#4F6F52] group-hover:translate-x-0.5 transition-all shrink-0 ml-1" />
-                        )}
+                        <span className="truncate">Rohan (Partner)</span>
+                        <ArrowRight className="w-3 h-3 text-stone-400 group-hover:text-[#4F6F52]" />
                       </button>
                     </div>
                   </div>
@@ -852,17 +881,72 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 </form>
               )}
 
-              {/* ===================== SIGN UP FORM ===================== */}
+              {/* ============================================================== */}
+              {/* ======================= SIGN UP FORM ========================= */}
+              {/* ============================================================== */}
               {mode === 'signup' && (
                 <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                   
-                  {/* Full Name Field */}
+                  {/* TWO REGISTRATION OPTIONS (Requirement 2) */}
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80 mb-2">
+                      Select Registration Method <span className="text-rose-500">*</span>
+                    </label>
+
+                    <div className="grid grid-cols-2 gap-2.5 p-1 bg-[#FAF9F6] rounded-2xl border border-[#E8E6E1]">
+                      {/* OPTION 1: EMAIL ID */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSignupMethod('email');
+                          setErrors({});
+                        }}
+                        className={`py-3 px-3 rounded-xl text-xs font-bold transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
+                          signupMethod === 'email'
+                            ? 'bg-white text-[#4F6F52] shadow-sm border border-[#E8E6E1]'
+                            : 'text-[#2C3333]/60 hover:text-[#2C3333]'
+                        }`}
+                        id="signup-option-email"
+                      >
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                          signupMethod === 'email' ? 'bg-[#4F6F52] text-white' : 'bg-stone-200 text-stone-600'
+                        }`}>
+                          <Mail className="w-3.5 h-3.5" />
+                        </div>
+                        <span>Option 1: Email ID</span>
+                      </button>
+
+                      {/* OPTION 2: MOBILE NUMBER */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSignupMethod('mobile');
+                          setErrors({});
+                        }}
+                        className={`py-3 px-3 rounded-xl text-xs font-bold transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
+                          signupMethod === 'mobile'
+                            ? 'bg-white text-[#4F6F52] shadow-sm border border-[#E8E6E1]'
+                            : 'text-[#2C3333]/60 hover:text-[#2C3333]'
+                        }`}
+                        id="signup-option-mobile"
+                      >
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                          signupMethod === 'mobile' ? 'bg-[#4F6F52] text-white' : 'bg-stone-200 text-stone-600'
+                        }`}>
+                          <Smartphone className="w-3.5 h-3.5" />
+                        </div>
+                        <span>Option 2: Mobile Number</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Customer Full Name Field */}
                   <div className="space-y-1.5">
                     <label 
                       htmlFor="signup-fullname" 
                       className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80"
                     >
-                      Full Name
+                      Customer Full Name <span className="text-rose-500">*</span>
                     </label>
                     <div className="relative">
                       <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#2C3333]/40">
@@ -876,7 +960,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                         value={signUpData.fullName}
                         onChange={(e) => handleSignUpChange('fullName', e.target.value)}
                         onBlur={() => handleBlur('fullName')}
-                        placeholder="e.g. Sanketh Sharma"
+                        placeholder="e.g. Srushti Halagi"
                         className={`w-full pl-10 pr-4 py-3 bg-[#FAF9F6] border rounded-2xl text-xs sm:text-sm text-[#2C3333] outline-none transition-all placeholder:text-[#2C3333]/30 ${
                           errors.fullName
                             ? 'border-rose-400 bg-rose-50/20 focus:border-rose-500 ring-1 ring-rose-200'
@@ -892,91 +976,99 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     )}
                   </div>
 
-                  {/* Email Field */}
-                  <div className="space-y-1.5">
-                    <label 
-                      htmlFor="signup-email" 
-                      className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80"
-                    >
-                      Email Address
-                    </label>
-                    <div className="relative">
-                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#2C3333]/40">
-                        <Mail className="w-4 h-4" />
+                  {/* CONDITIONAL CONTACT FIELD */}
+                  {signupMethod === 'email' ? (
+                    /* OPTION 1: EMAIL ID FIELD */
+                    <div className="space-y-1.5 animate-in fade-in duration-150">
+                      <label 
+                        htmlFor="signup-email" 
+                        className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80"
+                      >
+                        Customer Email Address <span className="text-rose-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#2C3333]/40">
+                          <Mail className="w-4 h-4" />
+                        </div>
+                        <input
+                          id="signup-email"
+                          name="email"
+                          type="email"
+                          autoComplete="email"
+                          value={signUpData.email}
+                          onChange={(e) => handleSignUpChange('email', e.target.value)}
+                          onBlur={() => handleBlur('email')}
+                          placeholder="e.g. srushti@example.com"
+                          className={`w-full pl-10 pr-4 py-3 bg-[#FAF9F6] border rounded-2xl text-xs sm:text-sm text-[#2C3333] outline-none transition-all placeholder:text-[#2C3333]/30 ${
+                            errors.email
+                              ? 'border-rose-400 bg-rose-50/20 focus:border-rose-500 ring-1 ring-rose-200'
+                              : 'border-[#E8E6E1] focus:border-[#4F6F52] focus:bg-white focus:ring-1 focus:ring-[#4F6F52]/20'
+                          }`}
+                        />
                       </div>
-                      <input
-                        id="signup-email"
-                        name="email"
-                        type="email"
-                        autoComplete="email"
-                        value={signUpData.email}
-                        onChange={(e) => handleSignUpChange('email', e.target.value)}
-                        onBlur={() => handleBlur('email')}
-                        placeholder="name@example.com"
-                        className={`w-full pl-10 pr-4 py-3 bg-[#FAF9F6] border rounded-2xl text-xs sm:text-sm text-[#2C3333] outline-none transition-all placeholder:text-[#2C3333]/30 ${
-                          errors.email
-                            ? 'border-rose-400 bg-rose-50/20 focus:border-rose-500 ring-1 ring-rose-200'
-                            : 'border-[#E8E6E1] focus:border-[#4F6F52] focus:bg-white focus:ring-1 focus:ring-[#4F6F52]/20'
-                        }`}
-                      />
+                      {errors.email ? (
+                        <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1 mt-1">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                          <span>{errors.email}</span>
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-stone-500">
+                          A 6-digit OTP will be sent to verify this email address.
+                        </p>
+                      )}
                     </div>
-                    {errors.email && (
-                      <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1 mt-1">
-                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                        <span>{errors.email}</span>
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Indian Mobile Number */}
-                  <div className="space-y-1.5">
-                    <label 
-                      htmlFor="signup-mobile" 
-                      className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80"
-                    >
-                      Indian Mobile Number
-                    </label>
-                    <div className={`flex rounded-2xl border bg-[#FAF9F6] overflow-hidden transition-all ${
-                      errors.mobileNumber
-                        ? 'border-rose-400 bg-rose-50/20 ring-1 ring-rose-200'
-                        : 'border-[#E8E6E1] focus-within:border-[#4F6F52] focus-within:bg-white focus-within:ring-1 focus-within:ring-[#4F6F52]/20'
-                    }`}>
-                      <span className="px-3.5 py-3 text-xs font-semibold text-[#2C3333]/70 border-r border-[#E8E6E1] bg-[#FAF9F6] flex items-center gap-1 select-none">
-                        <Phone className="w-3.5 h-3.5 text-[#4F6F52]" />
-                        <span>+91</span>
-                      </span>
-                      <input
-                        id="signup-mobile"
-                        name="mobileNumber"
-                        type="tel"
-                        maxLength={15}
-                        value={signUpData.mobileNumber}
-                        onChange={(e) => handleSignUpChange('mobileNumber', e.target.value)}
-                        onBlur={() => handleBlur('mobileNumber')}
-                        placeholder="98450 12260"
-                        className="w-full px-3.5 py-3 text-xs sm:text-sm bg-transparent text-[#2C3333] outline-none placeholder:text-[#2C3333]/30"
-                      />
+                  ) : (
+                    /* OPTION 2: MOBILE NUMBER FIELD */
+                    <div className="space-y-1.5 animate-in fade-in duration-150">
+                      <label 
+                        htmlFor="signup-mobile" 
+                        className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80"
+                      >
+                        Indian Mobile Number <span className="text-rose-500">*</span>
+                      </label>
+                      <div className={`flex rounded-2xl border bg-[#FAF9F6] overflow-hidden transition-all ${
+                        errors.mobileNumber
+                          ? 'border-rose-400 bg-rose-50/20 ring-1 ring-rose-200'
+                          : 'border-[#E8E6E1] focus-within:border-[#4F6F52] focus-within:bg-white focus-within:ring-1 focus-within:ring-[#4F6F52]/20'
+                      }`}>
+                        <span className="px-3.5 py-3 text-xs font-semibold text-[#2C3333]/70 border-r border-[#E8E6E1] bg-[#FAF9F6] flex items-center gap-1 select-none">
+                          <Phone className="w-3.5 h-3.5 text-[#4F6F52]" />
+                          <span>+91</span>
+                        </span>
+                        <input
+                          id="signup-mobile"
+                          name="mobileNumber"
+                          type="tel"
+                          maxLength={15}
+                          value={signUpData.mobileNumber}
+                          onChange={(e) => handleSignUpChange('mobileNumber', e.target.value)}
+                          onBlur={() => handleBlur('mobileNumber')}
+                          placeholder="98450 12345"
+                          className="w-full px-3.5 py-3 text-xs sm:text-sm bg-transparent text-[#2C3333] outline-none placeholder:text-[#2C3333]/30"
+                        />
+                      </div>
+                      {errors.mobileNumber ? (
+                        <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1 mt-1">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                          <span>{errors.mobileNumber}</span>
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-stone-500">
+                          A real 6-digit OTP will be sent to this number for SMS verification.
+                        </p>
+                      )}
                     </div>
-                    {errors.mobileNumber ? (
-                      <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1 mt-1">
-                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                        <span>{errors.mobileNumber}</span>
-                      </p>
-                    ) : (
-                      <p className="text-[10px] text-[#2C3333]/50">Used for instant table readiness SMS and QR check-in boarding passes.</p>
-                    )}
-                  </div>
+                  )}
 
                   {/* Password & Confirm Password Grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                     {/* Password */}
                     <div className="space-y-1.5">
                       <label 
                         htmlFor="signup-password" 
                         className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80"
                       >
-                        Password
+                        Password <span className="text-rose-500">*</span>
                       </label>
                       <div className="relative">
                         <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#2C3333]/40">
@@ -1019,7 +1111,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                         htmlFor="signup-confirm-password" 
                         className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80"
                       >
-                        Confirm Password
+                        Confirm Password <span className="text-rose-500">*</span>
                       </label>
                       <div className="relative">
                         <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#2C3333]/40">
@@ -1055,375 +1147,281 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                         </p>
                       )}
                     </div>
-
                   </div>
 
-                  {/* Role selection: "How will you use FlashTable?" */}
-                  <div className="space-y-2 pt-2">
-                    <div className="flex items-center justify-between">
-                      <label className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80">
-                        How will you use FlashTable?
-                      </label>
-                      <span className="text-[10px] text-[#2C3333]/50">Choose account type</span>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {/* CUSTOMER CARD */}
-                      <div
-                        id="role-signup-customer"
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => setSelectedRole('customer')}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelectedRole('customer'); }}
-                        className={`p-3.5 rounded-2xl border-2 cursor-pointer transition-all text-left flex flex-col justify-between ${
-                          selectedRole === 'customer'
-                            ? 'border-[#4F6F52] bg-[#4F6F520A] ring-2 ring-[#4F6F52]/20 shadow-xs'
-                            : 'border-[#E8E6E1] bg-[#FAF9F6] hover:border-[#4F6F52]/40 hover:bg-white'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                              selectedRole === 'customer' ? 'bg-[#4F6F52] text-white' : 'bg-[#4F6F521A] text-[#4F6F52]'
-                            }`}>
-                              <Compass className="w-4 h-4" />
-                            </div>
-                            <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-colors ${
-                              selectedRole === 'customer' ? 'border-[#4F6F52] bg-[#4F6F52] text-white' : 'border-[#E8E6E1] bg-white'
-                            }`}>
-                              {selectedRole === 'customer' && <Check className="w-2.5 h-2.5" />}
-                            </div>
-                          </div>
-                          <div className="text-[11px] font-bold uppercase tracking-wider text-[#4F6F52]">
-                            Customer
-                          </div>
-                          <p className="text-xs text-[#2C3333]/80 mt-0.5 leading-snug">
-                            Discover restaurants and reserve your perfect table.
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* RESTAURANT OWNER CARD */}
-                      <div
-                        id="role-signup-restaurant-owner"
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => setSelectedRole('restaurant-owner')}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelectedRole('restaurant-owner'); }}
-                        className={`p-3.5 rounded-2xl border-2 cursor-pointer transition-all text-left flex flex-col justify-between ${
-                          selectedRole === 'restaurant-owner'
-                            ? 'border-[#4F6F52] bg-[#4F6F520A] ring-2 ring-[#4F6F52]/20 shadow-xs'
-                            : 'border-[#E8E6E1] bg-[#FAF9F6] hover:border-[#4F6F52]/40 hover:bg-white'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                              selectedRole === 'restaurant-owner' ? 'bg-[#4F6F52] text-white' : 'bg-[#4F6F521A] text-[#4F6F52]'
-                            }`}>
-                              <Store className="w-4 h-4" />
-                            </div>
-                            <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-colors ${
-                              selectedRole === 'restaurant-owner' ? 'border-[#4F6F52] bg-[#4F6F52] text-white' : 'border-[#E8E6E1] bg-white'
-                            }`}>
-                              {selectedRole === 'restaurant-owner' && <Check className="w-2.5 h-2.5" />}
-                            </div>
-                          </div>
-                          <div className="text-[11px] font-bold uppercase tracking-wider text-[#4F6F52]">
-                            Restaurant Owner
-                          </div>
-                          <p className="text-xs text-[#2C3333]/80 mt-0.5 leading-snug">
-                            Manage your restaurant, tables, reservations and guests.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Primary Create Account Button */}
+                  {/* Submit Button */}
                   <button
                     type="submit"
                     disabled={isSubmitting}
-                    className="w-full py-3.5 px-6 rounded-full bg-[#2C3333] hover:bg-[#4F6F52] text-white text-xs font-bold uppercase tracking-widest transition-all duration-200 shadow-sm hover:shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed mt-3"
+                    className="w-full py-3.5 px-6 rounded-full bg-[#4F6F52] hover:bg-[#3D5A40] text-white text-xs font-bold uppercase tracking-widest transition-all duration-200 shadow-md shadow-[#4F6F52]/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed mt-2"
                     id="signup-submit-btn"
                   >
                     {isSubmitting ? (
                       <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     ) : (
                       <>
-                        <span>Create Account</span>
+                        <span>Continue & Send Verification OTP</span>
                         <ArrowRight className="w-4 h-4" />
                       </>
                     )}
                   </button>
 
-                  {/* Toggle to Sign In */}
-                  <div className="text-center pt-3 text-xs text-[#2C3333]/70">
+                  {/* Toggle to Log In */}
+                  <div className="text-center pt-2 text-xs text-[#2C3333]/70">
                     <span>Already have an account? </span>
                     <button
                       type="button"
                       onClick={() => handleSwitchMode('login')}
                       className="font-bold text-[#4F6F52] hover:text-[#3D5A40] hover:underline cursor-pointer"
-                      id="link-to-signin"
+                      id="link-to-login"
                     >
-                      Sign in
+                      Log in
                     </button>
                   </div>
 
                 </form>
               )}
 
-              {/* Data & Persistence Architecture Notice */}
-              <div className="mt-8 pt-5 border-t border-[#E8E6E1] text-[11px] text-[#2C3333]/50 flex items-center justify-between">
-                <span>Structured for persistent authentication gateway.</span>
-                <span className="flex items-center gap-1 text-[#4F6F52] font-semibold">
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>Zero-Spam Privacy</span>
-                </span>
+              {/* COMPANY ADMINISTRATION LINK (Strictly Protected) */}
+              <div className="mt-6 pt-4 border-t border-[#E8E6E1]/70 text-center">
+                <button
+                  type="button"
+                  onClick={() => setIsAdminSetupModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 text-xs text-stone-500 hover:text-emerald-800 font-medium transition-colors cursor-pointer group"
+                  id="link-company-admin-setup"
+                >
+                  <ShieldAlert className="w-3.5 h-3.5 text-stone-400 group-hover:text-emerald-700" />
+                  <span>Authorized Company Personnel Portal & Admin Provisioning</span>
+                </button>
               </div>
 
             </div>
           </div>
-
-          {/* Premium Restaurant Visual Column (5 cols on lg) */}
-          <div className="lg:col-span-5 flex flex-col justify-center">
-            <div className="relative rounded-3xl border border-[#E8E6E1] shadow-sm overflow-hidden min-h-[460px] lg:min-h-[580px] flex flex-col justify-end p-6 sm:p-8 md:p-10 group">
-              
-              {/* Background Restaurant Image */}
-              <img
-                src="https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1200&q=80"
-                alt="Fine dining architectural seating in Bengaluru"
-                className="absolute inset-0 w-full h-full object-cover object-center group-hover:scale-102 transition-transform duration-700"
-                referrerPolicy="no-referrer"
-              />
-
-              {/* Refined gradient overlay for readability & warmth */}
-              <div className="absolute inset-0 bg-gradient-to-t from-[#2C3333]/95 via-[#2C3333]/50 to-transparent" />
-              <div className="absolute inset-0 bg-[#4F6F52]/10 mix-blend-multiply pointer-events-none" />
-
-              {/* Content overlay */}
-              <div className="relative z-10 text-white space-y-4">
-                
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-white text-[10px] font-bold uppercase tracking-[0.2em] border border-white/20">
-                  <Armchair className="w-3.5 h-3.5" />
-                  <span>The FlashTable Standard</span>
-                </div>
-
-                <h2 className="text-2xl sm:text-3xl font-bold font-serif leading-tight">
-                  Reserve the exact table you desire. Dine with absolute certainty.
-                </h2>
-
-                <p className="text-xs text-white/80 leading-relaxed font-sans">
-                  From intimate garden courtyard tables in Lavelle Road to prime balcony corners in Indiranagar, FlashTable eliminates table guesswork.
-                </p>
-
-                {/* Editorial Feature Highlights */}
-                <div className="pt-2 space-y-2.5 border-t border-white/20 text-xs text-white/90">
-                  <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#4F6F52]" />
-                    <span>Real-time 2D architectural seating blueprints</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#4F6F52]" />
-                    <span>Zero-wait host podium check-in boarding passes</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#4F6F52]" />
-                    <span>Instant vacancy SMS alerts for high-demand dinner slots</span>
-                  </div>
-                </div>
-
-                {/* Subtle trust badge */}
-                <div className="pt-2 flex items-center justify-between text-[11px] text-white/70">
-                  <span>Bengaluru Culinary Network</span>
-                  <span className="font-semibold text-white">Indiranagar • Lavelle Rd • Koramangala</span>
-                </div>
-
-              </div>
-
-            </div>
-          </div>
-
         </div>
       </main>
 
+      {/* OTP Verification Modal (Requirements 2, 3, 6) */}
+      <OtpVerificationModal
+        isOpen={isOtpModalOpen}
+        onClose={() => setIsOtpModalOpen(false)}
+        destination={pendingOtpDestination}
+        destinationType={pendingOtpType}
+        purpose="signup"
+        initialOtpResult={initialOtpResult}
+        onVerified={handleOtpVerified}
+      />
+
+      {/* First-Time Welcome Modal (Requirement 4) */}
+      <FirstTimeWelcomeModal
+        isOpen={firstTimeModalOpen}
+        onProceed={handleProceedFromWelcome}
+        customerName={firstTimeUserData?.fullName}
+        email={firstTimeUserData?.email}
+        mobile={firstTimeUserData?.mobile || firstTimeUserData?.phone}
+      />
+
+      {/* Authorized Company Admin Setup Modal (Requirement 1) */}
+      <CompanyAdminSetupModal
+        isOpen={isAdminSetupModalOpen}
+        onClose={() => setIsAdminSetupModalOpen(false)}
+        onSuccess={(adminSummary) => {
+          setIsAdminSetupModalOpen(false);
+          onAuthSuccess(adminSummary, 'company-admin');
+        }}
+      />
+
       {/* Forgot Password Modal */}
       {isForgotModalOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div 
-            className="bg-white w-full max-w-md rounded-3xl border border-[#E8E6E1] shadow-2xl p-7 relative overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-            onClick={(e) => e.stopPropagation()}
+            className="bg-white w-full max-w-md rounded-3xl border border-[#E8E6E1] shadow-2xl p-6 sm:p-7 relative overflow-hidden animate-in zoom-in-95 duration-200"
+            role="dialog"
+            aria-modal="true"
           >
-            <div className="flex items-center gap-3.5 mb-4">
-              <div className="w-10 h-10 rounded-full bg-[#4F6F521A] text-[#4F6F52] flex items-center justify-center border border-[#4F6F52]/20">
-                <Lock className="w-5 h-5" />
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-[#4F6F521A] text-[#4F6F52] flex items-center justify-center">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-[#2C3333]">Reset Password</h3>
+                  <p className="text-xs text-[#2C3333]/60">Secure OTP-Based Password Recovery</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-xl font-bold font-serif text-[#2C3333]">
-                  Reset Password
-                </h3>
-                <p className="text-xs text-[#2C3333]/60">
-                  Enter your email to receive recovery instructions
-                </p>
-              </div>
+              <button 
+                onClick={() => setIsForgotModalOpen(false)}
+                className="p-1 rounded-full text-stone-400 hover:text-stone-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
-            <form onSubmit={handleForgotPasswordSubmit} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-[#2C3333]/70">
-                  Registered Email Address
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#2C3333]/40">
-                    <Mail className="w-4 h-4" />
-                  </div>
+            {forgotStatus && (
+              <div className={`p-3 rounded-xl text-xs font-semibold mb-4 ${
+                forgotStatus.success
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                  : 'bg-rose-50 text-rose-800 border border-rose-200'
+              }`}>
+                {forgotStatus.message}
+              </div>
+            )}
+
+            {forgotStep === 'request' && (
+              <form onSubmit={handleForgotRequestOtp} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-[#2C3333] mb-1">
+                    Registered Email ID or Mobile Number
+                  </label>
                   <input
-                    type="email"
+                    type="text"
                     required
-                    value={forgotEmail}
-                    onChange={(e) => setForgotEmail(e.target.value)}
-                    placeholder="name@example.com"
-                    className="w-full pl-10 pr-4 py-2.5 bg-[#FAF9F6] border border-[#E8E6E1] rounded-2xl text-xs sm:text-sm text-[#2C3333] outline-none focus:border-[#4F6F52]"
+                    value={forgotIdentifier}
+                    onChange={(e) => setForgotIdentifier(e.target.value)}
+                    placeholder="e.g. name@example.com or 9845012260"
+                    className="w-full px-3.5 py-2.5 text-xs bg-[#FAF9F6] border border-[#E8E6E1] rounded-xl outline-none focus:border-[#4F6F52]"
                   />
                 </div>
-              </div>
-
-              {forgotStatus && (
-                <div className={`p-3.5 rounded-2xl text-xs font-semibold ${
-                  forgotStatus.success
-                    ? 'bg-[#4F6F521A] text-[#4F6F52] border border-[#4F6F52]/20'
-                    : 'bg-rose-50 text-rose-700 border border-rose-200'
-                }`}>
-                  {forgotStatus.message}
-                </div>
-              )}
-
-              <div className="flex items-center gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsForgotModalOpen(false)}
-                  className="flex-1 py-2.5 rounded-full bg-[#FAF9F6] hover:bg-[#F2EFE9] text-[#2C3333] text-xs font-bold uppercase tracking-widest border border-[#E8E6E1] transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
                 <button
                   type="submit"
                   disabled={isForgotLoading}
-                  className="flex-1 py-2.5 rounded-full bg-[#2C3333] hover:bg-[#4F6F52] text-white text-xs font-bold uppercase tracking-widest transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                  className="w-full py-2.5 rounded-full bg-[#2C3333] hover:bg-[#4F6F52] text-white text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2"
                 >
-                  {isForgotLoading ? (
-                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <>
-                      <Send className="w-3.5 h-3.5" />
-                      <span>Send Link</span>
-                    </>
-                  )}
+                  {isForgotLoading ? <span>Sending Code...</span> : <span>Send Recovery OTP</span>}
                 </button>
-              </div>
-            </form>
+              </form>
+            )}
+
+            {forgotStep === 'verify' && (
+              <form onSubmit={handleForgotVerifyOtp} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-[#2C3333] mb-1">
+                    Enter 6-Digit OTP Code
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={6}
+                    value={forgotOtp}
+                    onChange={(e) => setForgotOtp(e.target.value.replace(/\D/g, ''))}
+                    placeholder="Enter 6-digit code"
+                    className="w-full px-3.5 py-2.5 text-center tracking-widest font-mono text-base font-bold bg-[#FAF9F6] border border-[#E8E6E1] rounded-xl outline-none focus:border-[#4F6F52]"
+                  />
+                  {forgotDevCode && (
+                    <div className="mt-1 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setForgotOtp(forgotDevCode)}
+                        className="text-[10px] text-amber-800 underline font-mono"
+                      >
+                        Auto-fill sandbox test code: {forgotDevCode}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="submit"
+                  disabled={isForgotLoading || forgotOtp.length !== 6}
+                  className="w-full py-2.5 rounded-full bg-[#4F6F52] hover:bg-[#3D5A40] text-white text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer"
+                >
+                  {isForgotLoading ? 'Verifying...' : 'Verify Code'}
+                </button>
+              </form>
+            )}
+
+            {forgotStep === 'new_password' && (
+              <form onSubmit={handleForgotSubmitNewPassword} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-[#2C3333] mb-1">
+                    New Password (Min. 6)
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={forgotNewPassword}
+                    onChange={(e) => setForgotNewPassword(e.target.value)}
+                    placeholder="Enter new password"
+                    className="w-full px-3.5 py-2.5 text-xs bg-[#FAF9F6] border border-[#E8E6E1] rounded-xl outline-none focus:border-[#4F6F52]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-[#2C3333] mb-1">
+                    Confirm New Password
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={forgotConfirmPassword}
+                    onChange={(e) => setForgotConfirmPassword(e.target.value)}
+                    placeholder="Re-enter new password"
+                    className="w-full px-3.5 py-2.5 text-xs bg-[#FAF9F6] border border-[#E8E6E1] rounded-xl outline-none focus:border-[#4F6F52]"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isForgotLoading}
+                  className="w-full py-2.5 rounded-full bg-[#4F6F52] hover:bg-[#3D5A40] text-white text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer"
+                >
+                  {isForgotLoading ? 'Updating Password...' : 'Save New Password & Continue'}
+                </button>
+              </form>
+            )}
           </div>
         </div>
       )}
 
-      {/* Select Restaurant Modal for Restaurant Owner / Rohan */}
+      {/* Select Restaurant Modal for Rohan / Partner Login */}
       {showRestaurantPicker && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
-          <div className="bg-white rounded-3xl shadow-2xl border border-[#E8E6E1] max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden my-auto animate-in fade-in zoom-in-95 duration-200">
-            {/* Modal Header */}
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl border border-[#E8E6E1] max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="p-6 border-b border-[#E8E6E1] bg-[#FAF9F6] flex items-center justify-between">
-              <div className="flex items-center gap-3.5">
-                <div className="w-10 h-10 rounded-2xl bg-[#4F6F521A] text-[#4F6F52] flex items-center justify-center shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-[#4F6F521A] text-[#4F6F52] flex items-center justify-center">
                   <Store className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold font-serif text-[#2C3333]">
-                    Select Restaurant
-                  </h3>
-                  <p className="text-xs text-[#2C3333]/70">
-                    Choose the restaurant venue you would like to manage for this session
-                  </p>
+                  <h3 className="text-lg font-bold font-serif text-[#2C3333]">Select Restaurant Venue</h3>
+                  <p className="text-xs text-[#2C3333]/70">Choose the partner venue console to manage</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                {pendingOwnerUser && (
-                  <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-[#E8E6E1] text-[11px] font-medium text-[#2C3333]/80">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                    <span>{pendingOwnerUser.fullName || 'Owner'}</span>
-                    <span className="text-[#2C3333]/40 font-mono text-[10px]">({pendingOwnerUser.email})</span>
-                  </div>
-                )}
-                <button
-                  onClick={() => setShowRestaurantPicker(false)}
-                  className="p-2 rounded-xl text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors cursor-pointer"
-                  title="Cancel and return to login"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+              <button
+                onClick={() => setShowRestaurantPicker(false)}
+                className="p-1.5 rounded-full text-stone-400 hover:text-stone-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
-            {/* Modal Body - 10 Restaurants List */}
-            <div className="p-6 overflow-y-auto max-h-[65vh] space-y-3 sm:space-y-0 sm:grid sm:grid-cols-2 sm:gap-4">
+            <div className="p-6 overflow-y-auto max-h-[60vh] grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               {RESTAURANTS_DATA.map((restaurant) => (
                 <button
                   key={restaurant.id}
                   onClick={() => handleSelectOwnerRestaurant(restaurant)}
-                  className="group relative flex items-center gap-3.5 p-3.5 rounded-2xl border border-[#E8E6E1] hover:border-[#4F6F52] hover:bg-[#FAF9F6] hover:shadow-md transition-all cursor-pointer text-left bg-white w-full"
+                  className="flex items-center gap-3.5 p-3.5 rounded-2xl border border-[#E8E6E1] hover:border-[#4F6F52] hover:bg-[#FAF9F6] transition-all text-left bg-white cursor-pointer group"
                 >
-                  <div className="w-16 h-16 rounded-xl overflow-hidden shrink-0 bg-stone-100 relative">
-                    <img
-                      src={restaurant.heroImage}
-                      alt={restaurant.name}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                      referrerPolicy="no-referrer"
-                    />
-                    <div className="absolute inset-0 bg-black/10 group-hover:bg-transparent transition-colors" />
-                  </div>
-                  
+                  <img
+                    src={restaurant.heroImage}
+                    alt={restaurant.name}
+                    className="w-14 h-14 rounded-xl object-cover"
+                    referrerPolicy="no-referrer"
+                  />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-stone-100 text-stone-600 border border-stone-200">
-                        {restaurant.id}
-                      </span>
-                      <span className="text-[11px] text-stone-400 font-medium truncate">
-                        {restaurant.cuisines?.join(' • ') || 'Multi-Cuisine'}
-                      </span>
-                    </div>
-                    <div className="text-sm font-bold text-[#2C3333] group-hover:text-[#4F6F52] transition-colors truncate">
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-stone-100 text-stone-600 font-bold">
+                      {restaurant.id}
+                    </span>
+                    <div className="text-sm font-bold text-[#2C3333] group-hover:text-[#4F6F52] truncate mt-0.5">
                       {restaurant.name}
                     </div>
-                    <div className="text-xs text-stone-500 flex items-center gap-1 mt-0.5 truncate">
-                      <MapPin className="w-3 h-3 text-stone-400 shrink-0" />
-                      <span className="truncate">{restaurant.neighborhood}</span>
-                      <span className="mx-1 text-stone-300">•</span>
-                      <span>{restaurant.tables?.length || 10} tables</span>
-                    </div>
+                    <div className="text-xs text-stone-500 truncate">{restaurant.neighborhood}</div>
                   </div>
-
-                  <div className="w-8 h-8 rounded-full bg-stone-100 group-hover:bg-[#4F6F52] group-hover:text-white flex items-center justify-center shrink-0 transition-colors text-stone-400">
-                    <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-                  </div>
+                  <ArrowRight className="w-4 h-4 text-stone-400 group-hover:text-[#4F6F52] transition-colors" />
                 </button>
               ))}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 px-6 border-t border-[#E8E6E1] bg-[#FAF9F6] flex items-center justify-between text-xs text-stone-500">
-              <span>Clicking a venue locks the dashboard context to that restaurant.</span>
-              <button
-                type="button"
-                onClick={() => setShowRestaurantPicker(false)}
-                className="px-4 py-1.5 rounded-full hover:bg-stone-200/60 font-semibold text-stone-600 transition-colors cursor-pointer"
-              >
-                Back to Login
-              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Subtle Page Footer */}
+      {/* Footer */}
       <footer className="py-6 border-t border-[#E8E6E1] text-center text-xs text-[#2C3333]/50">
         <p>© 2026 FlashTable Technologies India Pvt. Ltd. • Indiranagar, Bengaluru</p>
       </footer>

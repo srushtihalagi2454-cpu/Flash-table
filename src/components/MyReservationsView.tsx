@@ -51,6 +51,10 @@ import { formatDistanceWithAway, calculateEstimatedEta } from '../utils/smartArr
 import { cleanDateString, cleanTimeString, formatSyncedTimeIST } from '../utils/dateTime';
 import { getStoredSession } from '../services/authService';
 import { hydrateReservationWithSoloSafety, dispatchSoloSafetyNotification } from '../services/soloSafetyService';
+import { updateReservationTimesOnBackend } from '../services/reservationService';
+import { CustomerProfileSettingsModal } from './CustomerProfileSettingsModal';
+import { getLanguagePreference } from '../utils/languageUtils';
+import { SupportedLanguage } from '../types';
 
 interface MyReservationsViewProps {
   restaurants: Restaurant[];
@@ -89,6 +93,7 @@ interface MyReservationsViewProps {
   onRefreshReservations?: () => void;
   isLoading?: boolean;
   onUpdateDiningClockSession?: (reservationId: string, session: DiningClockSession | null) => void;
+  onUpdateReservationTimes?: (reservationId: string, timeIn: string, timeOut: string) => void;
 }
 
 type TabFilter = 'upcoming' | 'past' | 'cancelled';
@@ -120,6 +125,7 @@ export const MyReservationsView: React.FC<MyReservationsViewProps> = ({
   onRefreshReservations,
   isLoading = false,
   onUpdateDiningClockSession,
+  onUpdateReservationTimes,
 }) => {
   const [activeFilter, setActiveFilter] = useState<TabFilter>('upcoming');
   const [selectedQrRes, setSelectedQrRes] = useState<Reservation | null>(null);
@@ -133,6 +139,55 @@ export const MyReservationsView: React.FC<MyReservationsViewProps> = ({
   const [foodOrderRes, setFoodOrderRes] = useState<Reservation | null>(null);
   const [foodOrdersMap, setFoodOrdersMap] = useState<Record<string, FoodOrder>>({});
   const [clockSessionsMap, setClockSessionsMap] = useState<Record<string, DiningClockSession>>({});
+  const [isProfileSettingsOpen, setIsProfileSettingsOpen] = useState<boolean>(false);
+  const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>(getLanguagePreference);
+
+  // Manual Time In & Time Out State (Customer Side)
+  const [editingTimesResId, setEditingTimesResId] = useState<string | null>(null);
+  const [manualTimeIn, setManualTimeIn] = useState<string>('');
+  const [manualTimeOut, setManualTimeOut] = useState<string>('');
+  const [isSavingTimes, setIsSavingTimes] = useState<boolean>(false);
+  const [timesFeedbackMsg, setTimesFeedbackMsg] = useState<{ id: string; msg: string } | null>(null);
+
+  const handleStartEditTimes = (res: Reservation) => {
+    setEditingTimesResId(res.id);
+    setManualTimeIn(res.timeIn || '07:30 PM');
+    setManualTimeOut(res.timeOut || '09:15 PM');
+    setTimesFeedbackMsg(null);
+  };
+
+  const handleSaveCustomerTimes = async (res: Reservation) => {
+    if (!manualTimeIn.trim() || !manualTimeOut.trim()) return;
+    setIsSavingTimes(true);
+    try {
+      await updateReservationTimesOnBackend({
+        reservationId: res.id,
+        timeIn: manualTimeIn.trim(),
+        timeOut: manualTimeOut.trim(),
+        updatedBy: currentUser.userId || currentUser.fullName || 'Customer',
+        updatedRole: 'customer',
+        previousTimeIn: res.timeIn,
+        previousTimeOut: res.timeOut,
+        restaurantId: res.restaurantId,
+        restaurantName: res.restaurantName,
+        reason: 'Customer manual dining schedule update',
+      });
+
+      if (onUpdateReservationTimes) {
+        onUpdateReservationTimes(res.id, manualTimeIn.trim(), manualTimeOut.trim());
+      }
+
+      setTimesFeedbackMsg({ id: res.id, msg: 'Time In and Time Out updated successfully!' });
+      setTimeout(() => {
+        setEditingTimesResId(null);
+        setTimesFeedbackMsg(null);
+      }, 2000);
+    } catch {
+      setTimesFeedbackMsg({ id: res.id, msg: 'Failed to save times. Please retry.' });
+    } finally {
+      setIsSavingTimes(false);
+    }
+  };
 
   const session = getStoredSession();
   const effectiveRole = userRole || (currentUser as any)?.role || session?.role || 'customer';
@@ -425,6 +480,18 @@ export const MyReservationsView: React.FC<MyReservationsViewProps> = ({
                       <span>Restaurant Host Console</span>
                     </button>
                   )}
+
+                  <button
+                    onClick={() => {
+                      setIsProfileSettingsOpen(true);
+                      setIsProfileMenuOpen(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-xs text-[#2C3333] hover:bg-[#FAF9F6] flex items-center gap-2.5 transition-colors cursor-pointer border-t border-[#E8E6E1]/50"
+                    id="res-profile-menu-settings"
+                  >
+                    <Users className="w-4 h-4 text-[#4F6F52]" />
+                    <span>Language & Account Settings</span>
+                  </button>
                 </div>
 
                 <div className="border-t border-[#E8E6E1]/60 pt-1 mt-1">
@@ -903,6 +970,108 @@ export const MyReservationsView: React.FC<MyReservationsViewProps> = ({
                         </div>
                       );
                     })()}
+
+                    {/* 1. Manual Time In and Time Out — Customer Side */}
+                    <div className="p-4 rounded-2xl bg-white border border-[#E8E6E1] space-y-3" id={`manual-times-card-${res.id}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-[#4F6F52]" />
+                          <span className="text-xs font-bold uppercase tracking-wider text-[#2C3333]">
+                            Dining Schedule (Time In & Time Out)
+                          </span>
+                        </div>
+                        {!isCancelled && res.status !== 'completed' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (editingTimesResId === res.id) {
+                                setEditingTimesResId(null);
+                              } else {
+                                handleStartEditTimes(res);
+                              }
+                            }}
+                            className="text-xs font-bold text-[#4F6F52] hover:underline flex items-center gap-1 cursor-pointer"
+                            id={`edit-dining-times-btn-${res.id}`}
+                          >
+                            {editingTimesResId === res.id ? 'Close' : 'Edit Time In / Out'}
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div className="p-3 rounded-xl bg-[#FAF9F6] border border-[#E8E6E1]">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400 block">
+                            Time In
+                          </span>
+                          <span className="font-bold text-[#2C3333] text-sm mt-0.5 block font-mono">
+                            {res.timeIn || '07:30 PM'}
+                          </span>
+                        </div>
+                        <div className="p-3 rounded-xl bg-[#FAF9F6] border border-[#E8E6E1]">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400 block">
+                            Time Out
+                          </span>
+                          <span className="font-bold text-[#2C3333] text-sm mt-0.5 block font-mono">
+                            {res.timeOut || '09:15 PM'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Manual Time Input & Adjustment Form */}
+                      {editingTimesResId === res.id && (
+                        <div className="p-3.5 rounded-xl bg-[#FAF9F6] border border-[#4F6F52]/30 space-y-3 animate-in fade-in duration-150">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label htmlFor={`input-timein-${res.id}`} className="block text-[11px] font-bold text-stone-600 mb-1">
+                                Time In (Manual Input or Preset):
+                              </label>
+                              <input
+                                id={`input-timein-${res.id}`}
+                                type="text"
+                                value={manualTimeIn}
+                                onChange={(e) => setManualTimeIn(e.target.value)}
+                                placeholder="e.g. 07:30 PM"
+                                className="w-full px-3 py-1.5 bg-white border border-[#E8E6E1] rounded-lg text-xs font-bold font-mono text-[#2C3333] focus:border-[#4F6F52] outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label htmlFor={`input-timeout-${res.id}`} className="block text-[11px] font-bold text-stone-600 mb-1">
+                                Time Out (Manual Input or Preset):
+                              </label>
+                              <input
+                                id={`input-timeout-${res.id}`}
+                                type="text"
+                                value={manualTimeOut}
+                                onChange={(e) => setManualTimeOut(e.target.value)}
+                                placeholder="e.g. 09:15 PM"
+                                className="w-full px-3 py-1.5 bg-white border border-[#E8E6E1] rounded-lg text-xs font-bold font-mono text-[#2C3333] focus:border-[#4F6F52] outline-none"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-[#E8E6E1]/70">
+                            <span className="text-[10px] text-stone-500">
+                              Times are saved manually without creating an automatic timer.
+                            </span>
+                            <button
+                              type="button"
+                              disabled={isSavingTimes || !manualTimeIn.trim() || !manualTimeOut.trim()}
+                              onClick={() => handleSaveCustomerTimes(res)}
+                              className="px-4 py-1.5 rounded-lg bg-[#4F6F52] hover:bg-[#3D5A40] text-white text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-2xs whitespace-nowrap"
+                              id={`save-times-btn-${res.id}`}
+                            >
+                              {isSavingTimes ? 'Saving...' : 'Save Time In & Out'}
+                            </button>
+                          </div>
+
+                          {timesFeedbackMsg && timesFeedbackMsg.id === res.id && (
+                            <div className="p-2 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold">
+                              {timesFeedbackMsg.msg}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
 
                     {/* Clock In / Clock Out Dining Timer Feature */}
                     {!isCancelled && (
@@ -1893,6 +2062,24 @@ export const MyReservationsView: React.FC<MyReservationsViewProps> = ({
               [savedOrder.reservationId]: savedOrder,
             }));
             foodOrderRes.foodOrder = savedOrder;
+          }}
+        />
+      )}
+
+      {/* Customer Profile & Preferences Modal (Language Selection & Account Deletion) */}
+      {isProfileSettingsOpen && (
+        <CustomerProfileSettingsModal
+          currentUser={currentUser}
+          currentLanguage={currentLanguage}
+          onLanguageChange={(newLang) => {
+            setCurrentLanguage(newLang);
+          }}
+          reservations={reservations}
+          onClose={() => setIsProfileSettingsOpen(false)}
+          onSignOut={onSignOut}
+          onAccountDeleted={() => {
+            setIsProfileSettingsOpen(false);
+            onSignOut();
           }}
         />
       )}

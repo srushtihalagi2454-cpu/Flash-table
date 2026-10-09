@@ -438,3 +438,110 @@ export async function cancelReservationOnBackend(
   }
 }
 
+export interface UpdateReservationTimesParams {
+  reservationId: string;
+  timeIn: string;
+  timeOut: string;
+  updatedBy: string; // userId or userName
+  updatedRole: 'customer' | 'restaurant-owner' | 'company-admin' | string;
+  previousTimeIn?: string;
+  previousTimeOut?: string;
+  restaurantId?: string;
+  restaurantName?: string;
+  reason?: string;
+}
+
+export interface UpdateReservationTimesResult {
+  success: boolean;
+  message: string;
+  updatedAt: string;
+  timeIn: string;
+  timeOut: string;
+}
+
+export async function updateReservationTimesOnBackend(
+  params: UpdateReservationTimesParams
+): Promise<UpdateReservationTimesResult> {
+  const {
+    reservationId,
+    timeIn,
+    timeOut,
+    updatedBy,
+    updatedRole,
+    previousTimeIn,
+    previousTimeOut,
+    restaurantId,
+    restaurantName,
+    reason,
+  } = params;
+
+  const nowIso = new Date().toISOString();
+
+  // 1. Audit log recording for misuse monitoring
+  try {
+    const { recordAuditLog } = await import('./adminService');
+    const isSuspicious = Boolean(
+      (previousTimeIn && previousTimeOut && Math.abs(new Date(`2000-01-01 ${timeIn}`).getTime() - new Date(`2000-01-01 ${previousTimeIn}`).getTime()) > 3600000 * 4) ||
+      (reason && reason.toLowerCase().includes('dispute'))
+    );
+
+    recordAuditLog({
+      userId: updatedBy || 'USR-UNKNOWN',
+      userName: `${updatedRole === 'restaurant-owner' ? 'Restaurant Host/Owner' : updatedRole === 'company-admin' ? 'Company Admin' : 'Customer'} (${updatedBy})`,
+      userRole: updatedRole as any,
+      action: 'time_in_changed',
+      entityType: 'reservation',
+      entityId: reservationId,
+      restaurantId,
+      restaurantName,
+      details: `Updated dining schedule: Time In "${timeIn}" (was "${previousTimeIn || 'none'}"), Time Out "${timeOut}" (was "${previousTimeOut || 'none'}"). Updated by ${updatedRole}. ${reason ? 'Note: ' + reason : ''}`,
+      previousValue: `${previousTimeIn || ''} → ${previousTimeOut || ''}`,
+      newValue: `${timeIn} → ${timeOut}`,
+      isSuspicious,
+      suspiciousReason: isSuspicious ? 'Large time shift (>4h) or reported dispute' : undefined,
+    });
+  } catch (err) {
+    console.warn('Failed to record audit log for time update:', err);
+  }
+
+  // 2. Persist locally to flashtable_reservation_time_overrides
+  try {
+    const raw = localStorage.getItem('flashtable_reservation_time_overrides') || '{}';
+    const overrides = JSON.parse(raw);
+    overrides[reservationId] = {
+      timeIn,
+      timeOut,
+      updatedAt: nowIso,
+      updatedBy,
+      updatedRole,
+      reason,
+    };
+    localStorage.setItem('flashtable_reservation_time_overrides', JSON.stringify(overrides));
+  } catch {}
+
+  // 3. Attempt sync with backend proxy if online
+  try {
+    fetch('/api/reservations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'updateReservationTimes',
+        reservationId,
+        timeIn,
+        timeOut,
+        updatedBy,
+        updatedRole,
+        updatedAt: nowIso,
+      }),
+    }).catch(() => {});
+  } catch {}
+
+  return {
+    success: true,
+    message: 'Time In and Time Out updated and recorded successfully.',
+    updatedAt: nowIso,
+    timeIn,
+    timeOut,
+  };
+}
+

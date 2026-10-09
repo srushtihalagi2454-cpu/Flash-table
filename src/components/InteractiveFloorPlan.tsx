@@ -14,7 +14,7 @@ import {
   BellRing,
   AlertCircle
 } from 'lucide-react';
-import { Table, TableState, SeatingPreference, SmartMatchResult } from '../types';
+import { Table, TableState, SeatingPreference, SmartMatchResult, RestaurantFloor } from '../types';
 
 interface InteractiveFloorPlanProps {
   tables: Table[];
@@ -28,6 +28,9 @@ interface InteractiveFloorPlanProps {
   smartMatch: SmartMatchResult | null;
   onApplySmartMatch: () => void;
   onOpenNotifyMe: () => void;
+  floors?: RestaurantFloor[];
+  activeFloorId?: string;
+  onSelectFloor?: (floorId: string) => void;
 }
 
 export const InteractiveFloorPlan: React.FC<InteractiveFloorPlanProps> = ({
@@ -42,6 +45,9 @@ export const InteractiveFloorPlan: React.FC<InteractiveFloorPlanProps> = ({
   smartMatch,
   onApplySmartMatch,
   onOpenNotifyMe,
+  floors,
+  activeFloorId,
+  onSelectFloor,
 }) => {
   const [hoveredTable, setHoveredTable] = useState<Table | null>(null);
 
@@ -157,6 +163,36 @@ export const InteractiveFloorPlan: React.FC<InteractiveFloorPlanProps> = ({
         </div>
       )}
 
+      {/* Multi-Floor Selector Navigation */}
+      {floors && floors.length > 1 && (
+        <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-2 border-b border-[#E8E6E1]/60">
+          <span className="text-xs font-bold text-[#2C3333] shrink-0 mr-1">Floor Level:</span>
+          {floors.map((floor) => {
+            const isSelected = floor.id === activeFloorId;
+            const floorTablesCount = tables.filter((t) => (t.floorId || 'floor-0') === floor.id).length;
+            return (
+              <button
+                key={floor.id}
+                type="button"
+                onClick={() => onSelectFloor && onSelectFloor(floor.id)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                  isSelected
+                    ? 'bg-[#4F6F52] text-white shadow-xs'
+                    : 'bg-[#FAF9F6] text-[#2C3333]/70 hover:bg-[#E8E6E1]/50 border border-[#E8E6E1]'
+                }`}
+              >
+                <span>{floor.name}</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                  isSelected ? 'bg-white/20 text-white' : 'bg-[#E8E6E1] text-[#2C3333]/80'
+                }`}>
+                  {floorTablesCount} tables
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* 2D Architectural Floor Stage Canvas */}
       <div className="relative w-full aspect-[16/10] sm:aspect-[16/9] min-h-[380px] bg-[#FAF9F6] rounded-2xl border border-[#E8E6E1] overflow-hidden p-4 select-none">
         
@@ -212,7 +248,7 @@ export const InteractiveFloorPlan: React.FC<InteractiveFloorPlanProps> = ({
         </div>
 
         {/* Render Tables */}
-        {tables.map((table) => {
+        {(activeFloorId ? tables.filter((t) => (t.floorId || 'floor-0') === activeFloorId) : tables).map((table) => {
           const rawStatus = getTableStatus(table);
           const isSelected = selectedTableId === table.id;
           const isAvailable = rawStatus === 'available';

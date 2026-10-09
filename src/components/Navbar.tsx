@@ -11,20 +11,24 @@ import {
   Compass,
   ChevronDown,
   LogOut,
-  Bus
+  Bus,
+  ShieldCheck,
+  ShieldAlert,
+  KeyRound
 } from 'lucide-react';
 import { Reservation, Restaurant, UserRole } from '../types';
 import { isReservationForCustomer } from '../data/mockData';
 import { getStoredSession } from '../services/authService';
 
 interface NavbarProps {
-  activeTab: 'customer' | 'customer-home' | 'my-reservations' | 'restaurant' | 'how-it-works' | 'travel-dining' | 'login' | 'signup';
-  setActiveTab: (tab: 'customer' | 'customer-home' | 'my-reservations' | 'restaurant' | 'how-it-works' | 'travel-dining' | 'login' | 'signup') => void;
+  activeTab: 'customer' | 'customer-home' | 'my-reservations' | 'restaurant' | 'how-it-works' | 'travel-dining' | 'login' | 'signup' | 'company-admin';
+  setActiveTab: (tab: 'customer' | 'customer-home' | 'my-reservations' | 'restaurant' | 'how-it-works' | 'travel-dining' | 'login' | 'signup' | 'company-admin') => void;
   onOpenBookings: () => void;
   onOpenSmartArrival: () => void;
   onOpenAuth: () => void;
   onNavigateAuth: (mode: 'login' | 'signup') => void;
   onNavigateCustomerHome?: () => void;
+  onOpenAdminSetup?: () => void;
   isLoggedIn?: boolean;
   userRole?: UserRole;
   activeRestaurant?: Restaurant;
@@ -43,6 +47,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAuth,
   onNavigateAuth,
   onNavigateCustomerHome,
+  onOpenAdminSetup,
   isLoggedIn = false,
   userRole = 'customer',
   activeRestaurant,
@@ -71,6 +76,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const effectiveRole = userRole || (currentUser as any)?.role || session?.role || 'customer';
   const effectiveIsLoggedIn = isLoggedIn || !!session;
   const isRestaurantOwner = effectiveIsLoggedIn && effectiveRole === 'restaurant-owner';
+  const isCompanyAdmin = effectiveIsLoggedIn && effectiveRole === 'company-admin';
 
   // Filter reservations count to strictly the authenticated customer's userId
   const userReservationsCount = React.useMemo(() => {
@@ -117,7 +123,15 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
 
             {/* Location selector / Active Venue indicator */}
-            {isRestaurantOwner ? (
+            {isCompanyAdmin ? (
+              <div className="hidden lg:flex items-center gap-1.5 text-xs text-emerald-950 bg-emerald-100 px-3.5 py-1.5 rounded-full border border-emerald-300 shadow-2xs">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
+                <span className="font-semibold text-emerald-950 uppercase tracking-wider text-[10px]">Governance:</span>
+                <span className="text-xs font-bold text-emerald-900">
+                  Super Admin Console
+                </span>
+              </div>
+            ) : isRestaurantOwner ? (
               <div className="hidden lg:flex items-center gap-1.5 text-xs text-[#2C3333]/70 bg-white px-3.5 py-1.5 rounded-full border border-[#E8E6E1] shadow-2xs">
                 <Store className="w-3.5 h-3.5 text-[#4F6F52]" />
                 <span className="font-semibold text-[#2C3333] uppercase tracking-wider text-[10px]">Active Venue:</span>
@@ -231,7 +245,28 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Action Icons & Auth */}
           <div className="hidden sm:flex items-center gap-3">
-            {isRestaurantOwner ? (
+            {isCompanyAdmin ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setActiveTab('company-admin')}
+                  className="px-4 py-2 rounded-full bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                  id="nav-company-admin-btn"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Admin Console</span>
+                </button>
+                {onSignOut && (
+                  <button
+                    onClick={onSignOut}
+                    className="p-2 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors cursor-pointer"
+                    title="Sign Out Super Admin"
+                    id="nav-admin-signout-btn"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            ) : isRestaurantOwner ? (
               /* Restaurant Owner Profile / Account UI - Strictly Identified as Owner, NOT Diner */
               <div className="relative" ref={ownerMenuRef}>
                 <button
@@ -341,6 +376,20 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </button>
                 ) : (
                   <>
+                    {/* Company Admin Entry Point (Misuse Monitor) */}
+                    <button
+                      onClick={() => {
+                        if (onOpenAdminSetup) onOpenAdminSetup();
+                        else setActiveTab('company-admin');
+                      }}
+                      className="px-3 py-1.5 rounded-full text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-colors cursor-pointer flex items-center gap-1.5"
+                      title="Flash Table Corporate Admin Portal (Misuse & Platform Oversight)"
+                      id="nav-company-admin-setup-btn"
+                    >
+                      <ShieldAlert className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>Company Admin</span>
+                    </button>
+
                     {/* Login Link / Button */}
                     <button
                       onClick={() => onNavigateAuth('login')}
@@ -506,27 +555,41 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
               
               {/* Mobile Auth Actions */}
-              <div className="pt-2 border-t border-[#E8E6E1] grid grid-cols-2 gap-2">
+              <div className="pt-2 border-t border-[#E8E6E1] space-y-2">
                 <button
                   onClick={() => {
-                    onNavigateAuth('login');
+                    if (onOpenAdminSetup) onOpenAdminSetup();
+                    else setActiveTab('company-admin');
                     setIsMobileMenuOpen(false);
                   }}
-                  className="w-full text-center py-2.5 px-3 text-xs font-bold uppercase tracking-wider rounded-xl text-[#2C3333] bg-white border border-[#E8E6E1]"
-                  id="mobile-nav-login-btn"
+                  className="w-full text-center py-2.5 px-3 text-xs font-bold uppercase tracking-wider rounded-xl text-emerald-800 bg-emerald-50 border border-emerald-200 flex items-center justify-center gap-2"
+                  id="mobile-nav-company-admin-btn"
                 >
-                  Sign In
+                  <ShieldAlert className="w-4 h-4 text-emerald-700" />
+                  <span>Company Admin (Misuse Oversight)</span>
                 </button>
-                <button
-                  onClick={() => {
-                    onNavigateAuth('signup');
-                    setIsMobileMenuOpen(false);
-                  }}
-                  className="w-full text-center py-2.5 px-3 text-xs font-bold uppercase tracking-wider rounded-xl text-white bg-[#4F6F52]"
-                  id="mobile-nav-signup-btn"
-                >
-                  Sign Up
-                </button>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => {
+                      onNavigateAuth('login');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="w-full text-center py-2.5 px-3 text-xs font-bold uppercase tracking-wider rounded-xl text-[#2C3333] bg-white border border-[#E8E6E1]"
+                    id="mobile-nav-login-btn"
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    onClick={() => {
+                      onNavigateAuth('signup');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="w-full text-center py-2.5 px-3 text-xs font-bold uppercase tracking-wider rounded-xl text-white bg-[#4F6F52]"
+                    id="mobile-nav-signup-btn"
+                  >
+                    Sign Up
+                  </button>
+                </div>
               </div>
             </div>
           )}

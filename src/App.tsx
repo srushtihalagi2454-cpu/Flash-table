@@ -12,6 +12,8 @@ import { RestaurantDashboard } from './components/RestaurantDashboard';
 import { AuthModal } from './components/AuthModal';
 import { AuthPage } from './components/AuthPage';
 import { CustomerHomePage } from './components/CustomerHomePage';
+import { CompanyAdminDashboard } from './components/CompanyAdminDashboard';
+import { CompanyAdminSetupModal } from './components/CompanyAdminSetupModal';
 import { Footer } from './components/Footer';
 import { TravelDiningDiscovery } from './components/TravelDiningDiscovery';
 import { TravelBookingModal } from './components/TravelBookingModal';
@@ -32,15 +34,16 @@ import { updateSmartArrivalOnBackend } from './services/smartArrivalService';
 import { getCustomerReservationsFromBackend, cancelReservationOnBackend } from './services/reservationService';
 import { cleanDateString, cleanTimeString } from './utils/dateTime';
 import { parseStoredReservationTime } from './utils/timeRangeUtils';
-import { CheckCircle2, Sparkles, X, Bus } from 'lucide-react';
+import { CheckCircle2, Sparkles, X, Bus, ShieldAlert, ShieldCheck, KeyRound, AlertTriangle, ArrowRight } from 'lucide-react';
 
 export default function App() {
   // Check for existing authenticated session from Google Apps Script
   const initialSession = getStoredSession();
 
-  // Navigation tabs: 'customer' (Landing & Discovery), 'customer-home' (Logged-in Customer Home), 'my-reservations' (Dedicated Customer Reservations), 'restaurant' (Partner Dashboard), 'how-it-works', 'travel-dining', 'login', 'signup'
-  const [activeTab, setActiveTab] = useState<'customer' | 'customer-home' | 'my-reservations' | 'restaurant' | 'how-it-works' | 'travel-dining' | 'login' | 'signup'>(() => {
+  // Navigation tabs: 'customer' (Landing & Discovery), 'customer-home' (Logged-in Customer Home), 'my-reservations' (Dedicated Customer Reservations), 'restaurant' (Partner Dashboard), 'how-it-works', 'travel-dining', 'login', 'signup', 'company-admin'
+  const [activeTab, setActiveTab] = useState<'customer' | 'customer-home' | 'my-reservations' | 'restaurant' | 'how-it-works' | 'travel-dining' | 'login' | 'signup' | 'company-admin'>(() => {
     if (initialSession) {
+      if (initialSession.role === 'company-admin') return 'company-admin';
       return initialSession.role === 'restaurant-owner' ? 'restaurant' : 'customer-home';
     }
     return 'customer';
@@ -79,6 +82,9 @@ export default function App() {
       phone: '',
     };
   });
+
+  // Company Admin Profile Setup Modal state (Corporate misuse protection)
+  const [isAdminSetupModalOpen, setIsAdminSetupModalOpen] = useState<boolean>(false);
 
   // Smart Arrival Geofence State (Indiranagar / The Ember Room demo)
   const [smartArrivalState, setSmartArrivalState] = useState<SmartArrivalState>(createInitialSmartArrivalState);
@@ -959,7 +965,10 @@ export default function App() {
               });
             }
 
-            if (role === 'restaurant-owner') {
+            if (role === 'company-admin') {
+              setActiveTab('company-admin');
+              showToast('Authenticated as Flash Table Company Administration (Super Admin)');
+            } else if (role === 'restaurant-owner') {
               const targetRestId = userSummary?.restaurantId || 'rest-1';
               const targetRest = restaurants.find((r) => r.id.toLowerCase() === targetRestId.toLowerCase()) || restaurants[0];
               setActiveDashboardRestaurant(targetRest);
@@ -1007,6 +1016,8 @@ export default function App() {
             setTravelBookingRestaurant(r);
             setTravelBookingFulfillment('dine_in');
           }}
+          onOpenAdminSetup={() => setIsAdminSetupModalOpen(true)}
+          onNavigateCompanyAdmin={() => setActiveTab('company-admin')}
         />
       ) : activeTab === 'my-reservations' ? (
         <MyReservationsView
@@ -1063,6 +1074,7 @@ export default function App() {
             onOpenAuth={() => setActiveTab('login')}
             onNavigateAuth={(mode) => setActiveTab(mode)}
             onNavigateCustomerHome={() => setActiveTab('customer-home')}
+            onOpenAdminSetup={() => setIsAdminSetupModalOpen(true)}
             isLoggedIn={isLoggedIn}
             userRole={userRole}
             activeRestaurant={activeDashboardRestaurant}
@@ -1072,6 +1084,69 @@ export default function App() {
             selectedLocation={selectedNeighborhood}
             setSelectedLocation={setSelectedNeighborhood}
           />
+
+          {/* Flash Table Company Administration Notice (Platform Misuse Oversight) */}
+          {userRole !== 'company-admin' && (
+            <div className="bg-gradient-to-r from-stone-900 via-emerald-950 to-stone-900 text-white px-4 py-3 sm:px-6 shadow-md border-b border-emerald-800/40" id="company-admin-notice-banner">
+              <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                    <ShieldAlert className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="font-bold tracking-wide text-emerald-300 uppercase text-[10px] block">
+                      Flash Table Corporate Administration Notice
+                    </span>
+                    <span className="text-stone-200">
+                      Company side: Please create the official <strong>Company Admin Profile</strong> to oversee platform activity, monitor dining reservations, and look after the app for any misuse or fraud.
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => setIsAdminSetupModalOpen(true)}
+                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                    id="banner-create-admin-profile-btn"
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>Create Admin Profile</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('company-admin')}
+                    className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-stone-200 font-semibold text-xs transition-colors cursor-pointer"
+                    id="banner-open-admin-btn"
+                  >
+                    <span>Admin Console</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Logged Customer Default OTP Delivery Banner */}
+          {isLoggedIn && userRole === 'customer' && (
+            <div className="bg-emerald-50 border-b border-emerald-200 text-emerald-950 px-4 py-2.5 sm:px-6" id="logged-customer-otp-banner">
+              <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2.5 text-xs">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>
+                    Default verification OTP sent to logged customer (<strong>{currentUser.email || currentUser.phone || 'srushtihalagi2454@gmail.com'}</strong>): <strong className="font-mono bg-white px-2 py-0.5 rounded border border-emerald-300 text-emerald-900 tracking-wider">123456</strong>
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => {
+                      showToast(`Default OTP (123456) dispatched to ${currentUser.phone || currentUser.email || 'your account'}!`);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer"
+                    id="resend-default-otp-btn"
+                  >
+                    Re-send Default OTP (123456)
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Main Content Area */}
           <main className="flex-1">
@@ -1174,6 +1249,14 @@ export default function App() {
                 onUpdateRestaurantTables={handleUpdateRestaurantTables}
                 onUpdateRestaurantFloors={handleUpdateRestaurantFloors}
                 onUpdateRestaurantDetails={handleUpdateRestaurantDetails}
+              />
+            )}
+
+            {activeTab === 'company-admin' && (
+              <CompanyAdminDashboard
+                restaurants={restaurants}
+                reservations={reservations}
+                onSignOut={handleSignOut}
               />
             )}
           </main>
@@ -1303,6 +1386,20 @@ export default function App() {
         onClose={() => setIsAuthModalOpen(false)}
         onLoginSuccess={(name, phone) => {
           showToast(`Welcome back, ${name}! Signed in with ${phone}.`);
+        }}
+      />
+
+      {/* Company Admin Profile Setup Modal (Platform Misuse Protection) */}
+      <CompanyAdminSetupModal
+        isOpen={isAdminSetupModalOpen}
+        onClose={() => setIsAdminSetupModalOpen(false)}
+        onSuccess={(adminSummary) => {
+          setIsAdminSetupModalOpen(false);
+          handleSetUserRole('company-admin');
+          setIsLoggedIn(true);
+          setCurrentUser(adminSummary);
+          setActiveTab('company-admin');
+          showToast('Company Admin Profile created successfully! Welcome to the Platform Oversight Console.');
         }}
       />
 

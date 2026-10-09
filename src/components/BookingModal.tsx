@@ -784,6 +784,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 smartMatch={smartMatchResult}
                 onApplySmartMatch={handleApplySmartMatch}
                 onOpenNotifyMe={() => onOpenNotifyMe(restaurant, date, timeSlot, guests, seatingPreference)}
+                floors={floors}
+                activeFloorId={activeFloorId}
+                onSelectFloor={(fId) => setActiveFloorId(fId)}
               />
             )}
 

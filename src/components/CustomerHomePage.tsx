@@ -20,6 +20,8 @@ import {
   ArrowRight,
   Armchair,
   ShieldCheck,
+  ShieldAlert,
+  KeyRound,
   ChevronDown,
   UtensilsCrossed,
   QrCode,
@@ -34,8 +36,11 @@ import { MenuQrModal } from './MenuQrModal';
 import { getFormattedOperatingHours } from '../utils/operatingHours';
 import { ReservationTimerBadge } from './ReservationTimerBadge';
 import { DiningTimerCard } from './DiningTimerCard';
+import { CustomerProfileSettingsModal } from './CustomerProfileSettingsModal';
 import { getStoredSession } from '../services/authService';
 import { calculateReservationDuration } from '../utils/timeRangeUtils';
+import { getLanguagePreference, t } from '../utils/languageUtils';
+import { SupportedLanguage } from '../types';
 
 interface CustomerHomePageProps {
   restaurants: Restaurant[];
@@ -60,6 +65,8 @@ interface CustomerHomePageProps {
   onUpdateBookingTimes?: (timeIn: string, timeOut: string) => void;
   onNavigateTravelDining?: () => void;
   onBookForTravel?: (restaurant: Restaurant) => void;
+  onOpenAdminSetup?: () => void;
+  onNavigateCompanyAdmin?: () => void;
 }
 
 const CATEGORIES = [
@@ -98,7 +105,12 @@ export const CustomerHomePage: React.FC<CustomerHomePageProps> = ({
   onUpdateBookingTimes,
   onNavigateTravelDining,
   onBookForTravel,
+  onOpenAdminSetup,
+  onNavigateCompanyAdmin,
 }) => {
+  // State for default OTP dispatched notification
+  const [defaultOtpDispatchedNotice, setDefaultOtpDispatchedNotice] = useState<boolean>(false);
+
   // Search state
   const [selectedNeighborhood, setSelectedNeighborhood] = useState<string>('All Bengaluru');
   const [selectedDate, setSelectedDate] = useState<string>(() => initialDate || new Date().toISOString().split('T')[0]);
@@ -129,6 +141,8 @@ export const CustomerHomePage: React.FC<CustomerHomePageProps> = ({
   // Location selector dropdown / modal state
   const [isLocationModalOpen, setIsLocationModalOpen] = useState<boolean>(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState<boolean>(false);
+  const [isProfileSettingsOpen, setIsProfileSettingsOpen] = useState<boolean>(false);
+  const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>(getLanguagePreference);
   const [selectedMenuRestaurant, setSelectedMenuRestaurant] = useState<Restaurant | null>(null);
   const [selectedMenuQrRestaurant, setSelectedMenuQrRestaurant] = useState<Restaurant | null>(null);
 
@@ -471,6 +485,18 @@ export const CustomerHomePage: React.FC<CustomerHomePageProps> = ({
                       <span>Restaurant Host Console</span>
                     </button>
                   )}
+
+                  <button
+                    onClick={() => {
+                      setIsProfileSettingsOpen(true);
+                      setIsProfileMenuOpen(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-xs text-[#2C3333] hover:bg-[#FAF9F6] flex items-center gap-2.5 transition-colors cursor-pointer border-t border-[#E8E6E1]/50"
+                    id="profile-menu-settings"
+                  >
+                    <SlidersHorizontal className="w-4 h-4 text-[#4F6F52]" />
+                    <span>Language & Account Settings</span>
+                  </button>
                 </div>
 
                 <div className="pt-1 border-t border-[#E8E6E1]/60">
@@ -493,7 +519,104 @@ export const CustomerHomePage: React.FC<CustomerHomePageProps> = ({
       </header>
 
       {/* Main Content Body */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 space-y-12">
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+
+        {/* Company Administration & Misuse Protection Notice */}
+        <section aria-label="Company Administration Notice" id="cust-company-admin-notice">
+          <div className="bg-gradient-to-r from-stone-900 via-emerald-950 to-stone-900 text-white rounded-3xl p-5 sm:p-6 shadow-md border border-emerald-800/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0 shadow-xs">
+                <ShieldAlert className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    Flash Table Company Security Notice
+                  </span>
+                  <span className="text-[11px] text-stone-400">Platform Oversight & Misuse Protection</span>
+                </div>
+                <h4 className="text-sm sm:text-base font-bold text-white">
+                  Company side: Please create the official Administrator Profile to oversee the app and look after misuse
+                </h4>
+                <p className="text-xs text-stone-300 leading-relaxed max-w-3xl">
+                  Flash Table company administration must monitor all platform dining reservations, review customer/restaurant Time In &amp; Time Out changes, identify suspicious behavior, and suspend abusive accounts when necessary.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 shrink-0 self-start md:self-center">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onOpenAdminSetup) onOpenAdminSetup();
+                }}
+                className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition-all shadow-md shadow-emerald-900/40 flex items-center gap-2 cursor-pointer"
+                id="create-admin-profile-btn-home"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>Create Admin Profile</span>
+              </button>
+              {onNavigateCompanyAdmin && (
+                <button
+                  type="button"
+                  onClick={onNavigateCompanyAdmin}
+                  className="px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-stone-200 font-semibold text-xs transition-colors cursor-pointer"
+                  id="open-admin-console-btn-home"
+                >
+                  Admin Console
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Default OTP Notification Card for Logged Customer */}
+        <section aria-label="Customer OTP Verification Status" id="cust-default-otp-card">
+          <div className="bg-emerald-50/90 rounded-2xl p-4 sm:p-5 border border-emerald-200 text-emerald-950 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-900 font-bold">
+                    Logged Customer Security Code
+                  </span>
+                  <span className="text-xs text-emerald-800 font-medium">
+                    Verified Contact: {currentUser.email || currentUser.phone || 'srushtihalagi2454@gmail.com'}
+                  </span>
+                </div>
+                <h4 className="text-sm font-bold text-emerald-950 mt-1">
+                  Default Verification OTP Sent: <span className="font-mono text-base px-2 py-0.5 bg-white rounded-lg border border-emerald-300 text-emerald-900 font-black tracking-widest ml-1">123456</span>
+                </h4>
+                <p className="text-xs text-emerald-800/90 mt-0.5">
+                  The standard default OTP has been dispatched to your account. You can use code <strong className="font-mono">123456</strong> for instant verification across reservations and account actions.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 self-start md:self-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setDefaultOtpDispatchedNotice(true);
+                  setTimeout(() => setDefaultOtpDispatchedNotice(false), 4000);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs uppercase tracking-wider transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
+                id="resend-default-otp-home-btn"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Send Default OTP Again</span>
+              </button>
+            </div>
+          </div>
+          {defaultOtpDispatchedNotice && (
+            <div className="mt-2.5 p-3 rounded-xl bg-emerald-100/90 border border-emerald-300 text-emerald-950 text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
+              <Check className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span>Default OTP <strong>123456</strong> sent to your logged customer account ({currentUser.email || currentUser.phone || 'registered contact'})!</span>
+            </div>
+          )}
+        </section>
 
         {/* 2. Compact Upcoming Reservation Card (Near top) */}
         {activeReservation && (
@@ -1485,6 +1608,24 @@ export const CustomerHomePage: React.FC<CustomerHomePageProps> = ({
           onViewFullMenu={(rest) => {
             setSelectedMenuQrRestaurant(null);
             setSelectedMenuRestaurant(rest);
+          }}
+        />
+      )}
+
+      {/* Customer Profile & Preferences Modal (Language Selection & Account Deletion) */}
+      {isProfileSettingsOpen && (
+        <CustomerProfileSettingsModal
+          currentUser={currentUser}
+          currentLanguage={currentLanguage}
+          onLanguageChange={(newLang) => {
+            setCurrentLanguage(newLang);
+          }}
+          reservations={reservations}
+          onClose={() => setIsProfileSettingsOpen(false)}
+          onSignOut={onSignOut}
+          onAccountDeleted={() => {
+            setIsProfileSettingsOpen(false);
+            onSignOut();
           }}
         />
       )}

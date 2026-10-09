@@ -12,6 +12,7 @@ import {
   Info
 } from 'lucide-react';
 import { RestaurantFloor } from '../types';
+import { recordAuditLog } from '../services/adminService';
 
 interface ManageFloorsModalProps {
   restaurantName: string;
@@ -29,12 +30,51 @@ export const ManageFloorsModal: React.FC<ManageFloorsModalProps> = ({
   tableCountsByFloor,
 }) => {
   const [localFloors, setLocalFloors] = useState<RestaurantFloor[]>([...floors].sort((a, b) => a.order - b.order));
+  const [floorCountInput, setFloorCountInput] = useState<number>(floors.length || 2);
   const [newFloorName, setNewFloorName] = useState('');
   const [newFloorDescription, setNewFloorDescription] = useState('');
   const [editingFloorId, setEditingFloorId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [editingDesc, setEditingDesc] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [selectedFloorForObjects, setSelectedFloorForObjects] = useState<string>(localFloors[0]?.id || 'floor-0');
+
+  // Generator matching specification:
+  // Enter 3 -> Ground Floor, Floor 1, Floor 2
+  // Enter 5 -> Ground Floor, Floor 1, Floor 2, Floor 3, Floor 4
+  const handleGenerateByCount = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    const count = Number(floorCountInput);
+    if (!count || count < 1 || count > 15) {
+      setErrorMsg('Please enter a valid number of floors between 1 and 15.');
+      return;
+    }
+
+    const generated: RestaurantFloor[] = [];
+    for (let i = 0; i < count; i++) {
+      const existing = localFloors[i];
+      const floorName = i === 0 ? 'Ground Floor' : `Floor ${i}`;
+      generated.push({
+        id: existing?.id || `floor-${i}-${Date.now().toString().slice(-4)}`,
+        floorNumber: i,
+        name: existing?.name || floorName,
+        description: existing?.description || (i === 0 ? 'Ground level main dining & courtyard' : `Level ${i} dining space`),
+        order: i,
+        objects: existing?.objects || [
+          { id: `obj-${i}-door`, floorId: `floor-${i}`, type: 'entrance', name: 'Main Entrance', x: 4, y: 50, width: 8, height: 12 },
+          { id: `obj-${i}-kitchen`, floorId: `floor-${i}`, type: 'kitchen', name: 'Kitchen & Service', x: 80, y: 14, width: 16, height: 16 },
+          { id: `obj-${i}-counter`, floorId: `floor-${i}`, type: 'counter', name: 'Host Counter', x: 12, y: 82, width: 16, height: 10 },
+          { id: `obj-${i}-washroom`, floorId: `floor-${i}`, type: 'washroom', name: 'Washrooms', x: 80, y: 80, width: 14, height: 12 },
+        ],
+      });
+    }
+
+    setLocalFloors(generated);
+    if (!generated.some((f) => f.id === selectedFloorForObjects)) {
+      setSelectedFloorForObjects(generated[0]?.id || '');
+    }
+  };
 
   // Add a new dynamic floor
   const handleAddFloor = (e: React.FormEvent) => {
@@ -58,12 +98,54 @@ export const ManageFloorsModal: React.FC<ManageFloorsModalProps> = ({
       name: trimmed,
       description: newFloorDescription.trim() || `Level ${nextOrder} dining area`,
       order: nextOrder,
+      objects: [
+        { id: `obj-${nextOrder}-door`, floorId: `floor-${nextOrder}`, type: 'entrance', name: 'Entrance Door', x: 4, y: 50, width: 8, height: 12 },
+        { id: `obj-${nextOrder}-counter`, floorId: `floor-${nextOrder}`, type: 'counter', name: 'Service Counter', x: 80, y: 80, width: 14, height: 10 },
+      ],
     };
 
     const nextList = [...localFloors, newFloor];
     setLocalFloors(nextList);
+    setFloorCountInput(nextList.length);
     setNewFloorName('');
     setNewFloorDescription('');
+  };
+
+  // Add architectural area/object to selected floor
+  const handleAddObjectToFloor = (type: any, name: string) => {
+    const targetFloor = localFloors.find((f) => f.id === selectedFloorForObjects);
+    if (!targetFloor) return;
+
+    const newObj = {
+      id: `obj-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      floorId: targetFloor.id,
+      type,
+      name,
+      x: Math.floor(Math.random() * 60) + 10,
+      y: Math.floor(Math.random() * 60) + 10,
+      width: 14,
+      height: 12,
+    };
+
+    const currentObjects = targetFloor.objects || [];
+    setLocalFloors((prev) =>
+      prev.map((f) =>
+        f.id === targetFloor.id
+          ? { ...f, objects: [...currentObjects, newObj] }
+          : f
+      )
+    );
+  };
+
+  // Remove architectural area/object from floor
+  const handleRemoveObjectFromFloor = (floorId: string, objId: string) => {
+    setLocalFloors((prev) =>
+      prev.map((f) =>
+        f.id === floorId
+          ? { ...f, objects: (f.objects || []).filter((o) => o.id !== objId) }
+          : f
+      )
+    );
   };
 
   // Start editing a floor
@@ -125,6 +207,18 @@ export const ManageFloorsModal: React.FC<ManageFloorsModalProps> = ({
 
   // Commit changes
   const handleSaveAll = () => {
+    try {
+      recordAuditLog({
+        userId: 'USR-OWNER-CURRENT',
+        userName: `${restaurantName} Owner`,
+        userRole: 'restaurant-owner',
+        action: 'floor_layout_saved',
+        entityType: 'floor',
+        entityId: `floors-${restaurantName}`,
+        details: `Saved 2D floor layout for ${restaurantName}. Total ${localFloors.length} floor(s): ${localFloors.map((f) => f.name).join(', ')}.`,
+      });
+    } catch {}
+
     onUpdateFloors(localFloors);
     onClose();
   };
@@ -166,12 +260,122 @@ export const ManageFloorsModal: React.FC<ManageFloorsModalProps> = ({
             </div>
           )}
 
-          {/* Quick info */}
-          <div className="p-3.5 rounded-2xl bg-[#FAF9F6] border border-[#E8E6E1] text-xs text-[#2C3333]/70 flex items-start gap-2.5">
-            <Info className="w-4 h-4 text-[#4F6F52] shrink-0 mt-0.5" />
-            <span>
-              Floors are fully dynamic. You can configure any number of floors (e.g. Ground Floor, 1st Floor, 2nd Floor, Rooftop Terrace). Changes instantly reflect on the 3D layout view.
-            </span>
+          {/* Section 4: Number of Floors Auto-Generation Card */}
+          <div className="p-4 rounded-2xl bg-white border border-[#E8E6E1] shadow-2xs space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-[#4F6F52] flex items-center gap-1.5">
+                  <Layers className="w-4 h-4 text-[#4F6F52]" />
+                  Number of Floors Setup
+                </span>
+                <p className="text-[11px] text-[#2C3333]/60 mt-0.5">
+                  Enter total floors in your restaurant (e.g. 3 generates Ground Floor, Floor 1, Floor 2)
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleGenerateByCount} className="flex items-center gap-2.5">
+              <div className="flex-1">
+                <input
+                  type="number"
+                  min={1}
+                  max={15}
+                  value={floorCountInput}
+                  onChange={(e) => setFloorCountInput(Number(e.target.value) || 1)}
+                  className="w-full px-3.5 py-2 bg-[#FAF9F6] border border-[#E8E6E1] rounded-xl text-xs font-bold text-[#2C3333] focus:border-[#4F6F52] outline-none"
+                  placeholder="Number of Floors (e.g. 3)"
+                  id="input-number-of-floors"
+                />
+              </div>
+              <button
+                type="submit"
+                className="px-4 py-2 bg-[#4F6F52] hover:bg-[#3D5A40] text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-2xs cursor-pointer whitespace-nowrap"
+                id="btn-generate-floors"
+              >
+                Set Floors
+              </button>
+            </form>
+          </div>
+
+          {/* Section 5: 2D Floor Architectural Areas & Objects Configurator */}
+          <div className="p-4 rounded-2xl bg-white border border-[#E8E6E1] shadow-2xs space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-[#2C3333] flex items-center gap-1.5">
+                  <span>2D Layout Objects for Floor:</span>
+                </span>
+                <p className="text-[11px] text-[#2C3333]/60 mt-0.5">
+                  Add and arrange doors, entrance, windows, counters, kitchen, washrooms per floor
+                </p>
+              </div>
+              
+              <select
+                value={selectedFloorForObjects}
+                onChange={(e) => setSelectedFloorForObjects(e.target.value)}
+                className="px-2.5 py-1.5 bg-[#FAF9F6] border border-[#E8E6E1] rounded-xl text-xs font-bold text-[#4F6F52] outline-none cursor-pointer"
+              >
+                {localFloors.map((fl) => (
+                  <option key={fl.id} value={fl.id}>
+                    {fl.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Quick add object buttons */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              {[
+                { type: 'entrance', label: '+ Entrance' },
+                { type: 'door', label: '+ Door' },
+                { type: 'window', label: '+ Window' },
+                { type: 'counter', label: '+ Counter' },
+                { type: 'kitchen', label: '+ Kitchen' },
+                { type: 'washroom', label: '+ Washroom' },
+                { type: 'bar', label: '+ Bar' },
+              ].map((btn) => (
+                <button
+                  key={btn.type}
+                  type="button"
+                  onClick={() => handleAddObjectToFloor(btn.type, btn.label.replace('+ ', ''))}
+                  className="px-2.5 py-1 rounded-lg bg-[#FAF9F6] hover:bg-stone-100 border border-[#E8E6E1] text-[11px] font-semibold text-[#2C3333] transition-colors cursor-pointer"
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Current objects on this floor */}
+            {(() => {
+              const activeFloorObj = localFloors.find((f) => f.id === selectedFloorForObjects);
+              const objects = activeFloorObj?.objects || [];
+
+              return (
+                <div className="mt-2 space-y-1.5 max-h-32 overflow-y-auto">
+                  {objects.length === 0 ? (
+                    <p className="text-[11px] text-stone-400 italic">No custom objects added yet.</p>
+                  ) : (
+                    objects.map((obj) => (
+                      <div
+                        key={obj.id}
+                        className="px-2.5 py-1.5 rounded-lg bg-[#FAF9F6] border border-[#E8E6E1] flex items-center justify-between text-[11px]"
+                      >
+                        <span className="font-medium text-[#2C3333]">
+                          {obj.name} <span className="text-stone-400">({obj.type})</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveObjectFromFloor(selectedFloorForObjects, obj.id)}
+                          className="text-rose-600 hover:text-rose-800 p-0.5"
+                          title="Remove Object"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {/* List of current floors */}

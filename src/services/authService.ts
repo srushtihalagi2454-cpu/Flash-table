@@ -1,20 +1,28 @@
-import { LoginFormData, SignUpFormData, AuthValidationErrors, UserRole } from '../types';
+import { 
+  LoginFormData, 
+  SignUpFormData, 
+  AuthValidationErrors, 
+  UserRole,
+  OtpRequestResult,
+  OtpVerificationResult,
+  AdminSetupFormData
+} from '../types';
 import { RESTAURANTS_DATA } from '../data/mockData';
 
 /**
  * FlashTable Authentication Service
- * Connected to Google Apps Script Web App Backend & Google Sheets "Users" Database.
+ * Connected to secure backend API & Google Sheets database.
  */
 
 export const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyGStCgmWV--V5mHS_AGKql8dRZ6JIWHTRpKDtrQI6TWXavglVofqs5CwvKUGiPL_5z/exec';
 const LOCAL_PROXY_URL = '/api/auth';
 const AUTH_SESSION_KEY = 'flashtable_auth_session';
 
-// Email regex pattern meeting RFC 5322 standard
-const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+// Email regex pattern meeting standard specifications
+export const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
 // Indian mobile number regex: 10 digits starting with 6, 7, 8, or 9
-const INDIAN_PHONE_REGEX = /^[6-9]\d{9}$/;
+export const INDIAN_PHONE_REGEX = /^[6-9]\d{9}$/;
 
 export interface AuthenticatedUserSession {
   userId?: string;
@@ -25,7 +33,31 @@ export interface AuthenticatedUserSession {
   role: UserRole;
   signedInAt: string;
   restaurantId?: string;
+  isFirstTimeLogin?: boolean;
 }
+
+/**
+ * Masks destination identifiers for secure OTP display
+ */
+export const maskIdentifier = (val: string, type: 'email' | 'mobile'): string => {
+  if (type === 'email' || val.includes('@')) {
+    const parts = val.trim().split('@');
+    if (parts.length === 2) {
+      const name = parts[0];
+      const domain = parts[1];
+      if (name.length <= 3) {
+        return `${name[0]}***@${domain}`;
+      }
+      return `${name.slice(0, 2)}***${name.slice(-2)}@${domain}`;
+    }
+    return val;
+  }
+  const digits = val.replace(/\D/g, '').slice(-10);
+  if (digits.length === 10) {
+    return `+91 ${digits.slice(0, 2)}*** **${digits.slice(-3)}`;
+  }
+  return val;
+};
 
 /**
  * Retrieves the currently active authenticated session from storage if present.
@@ -35,7 +67,7 @@ export const getStoredSession = (): AuthenticatedUserSession | null => {
     const raw = localStorage.getItem(AUTH_SESSION_KEY) || sessionStorage.getItem(AUTH_SESSION_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && parsed.email && parsed.role) {
+      if (parsed && typeof parsed === 'object' && (parsed.email || parsed.mobile) && parsed.role) {
         return parsed as AuthenticatedUserSession;
       }
     }
@@ -76,11 +108,23 @@ export const clearStoredSession = (): void => {
 
 export const validateLoginForm = (data: LoginFormData): AuthValidationErrors => {
   const errors: AuthValidationErrors = {};
+  const ident = (data.loginIdentifier || data.email || '').trim();
 
-  if (!data.email || !data.email.trim()) {
-    errors.email = 'Email address is required.';
-  } else if (!EMAIL_REGEX.test(data.email.trim())) {
-    errors.email = 'Please enter a valid email address.';
+  if (!ident) {
+    errors.loginIdentifier = 'Email ID or Mobile Number is required.';
+    errors.email = 'Email ID or Mobile Number is required.';
+  } else if (ident.includes('@')) {
+    if (!EMAIL_REGEX.test(ident)) {
+      errors.loginIdentifier = 'Please enter a valid email address.';
+      errors.email = 'Please enter a valid email address.';
+    }
+  } else {
+    const digits = ident.replace(/\D/g, '');
+    const phone10 = digits.length === 12 && digits.startsWith('91') ? digits.slice(2) : digits;
+    if (phone10.length !== 10 || !INDIAN_PHONE_REGEX.test(phone10)) {
+      errors.loginIdentifier = 'Please enter a valid 10-digit Indian mobile number.';
+      errors.email = 'Please enter a valid 10-digit Indian mobile number.';
+    }
   }
 
   if (!data.password) {
@@ -95,38 +139,39 @@ export const validateSignUpForm = (data: SignUpFormData): AuthValidationErrors =
 
   // 1. Full name validation
   if (!data.fullName.trim()) {
-    errors.fullName = 'Full name is required.';
+    errors.fullName = 'Customer name is required.';
   } else if (data.fullName.trim().length < 2) {
     errors.fullName = 'Please enter your full name (at least 2 characters).';
   }
 
-  // 2. Email validation
-  if (!data.email.trim()) {
-    errors.email = 'Email address is required.';
-  } else if (!EMAIL_REGEX.test(data.email.trim())) {
-    errors.email = 'Please enter a valid email address.';
+  // 2. Contact validation based on signupMethod
+  if (data.signupMethod === 'email') {
+    if (!data.email.trim()) {
+      errors.email = 'Email address is required.';
+    } else if (!EMAIL_REGEX.test(data.email.trim())) {
+      errors.email = 'Please enter a valid email address.';
+    }
+  } else {
+    const digitsOnly = data.mobileNumber.replace(/\D/g, '');
+    const phone10 = digitsOnly.length === 12 && digitsOnly.startsWith('91')
+      ? digitsOnly.slice(2)
+      : digitsOnly;
+
+    if (!data.mobileNumber.trim()) {
+      errors.mobileNumber = 'Indian mobile number is required.';
+    } else if (phone10.length !== 10 || !INDIAN_PHONE_REGEX.test(phone10)) {
+      errors.mobileNumber = 'Please enter a valid 10-digit Indian mobile number starting with 6-9.';
+    }
   }
 
-  // 3. Indian mobile number validation
-  const digitsOnly = data.mobileNumber.replace(/\D/g, '');
-  const phone10 = digitsOnly.length === 12 && digitsOnly.startsWith('91')
-    ? digitsOnly.slice(2)
-    : digitsOnly;
-
-  if (!data.mobileNumber.trim()) {
-    errors.mobileNumber = 'Indian mobile number is required.';
-  } else if (phone10.length !== 10 || !INDIAN_PHONE_REGEX.test(phone10)) {
-    errors.mobileNumber = 'Please enter a valid 10-digit Indian mobile number.';
-  }
-
-  // 4. Password validation (minimum 6 characters)
+  // 3. Password validation (minimum 6 characters)
   if (!data.password) {
     errors.password = 'Password is required.';
   } else if (data.password.length < 6) {
     errors.password = 'Password is too short (minimum 6 characters).';
   }
 
-  // 5. Confirm password validation
+  // 4. Confirm password validation
   if (!data.confirmPassword) {
     errors.confirmPassword = 'Confirm password is required.';
   } else if (data.password !== data.confirmPassword) {
@@ -139,6 +184,7 @@ export const validateSignUpForm = (data: SignUpFormData): AuthValidationErrors =
 export interface AuthSubmissionResult {
   success: boolean;
   message: string;
+  isFirstTimeLogin?: boolean;
   errors?: AuthValidationErrors;
   userSummary?: {
     userId?: string;
@@ -148,6 +194,7 @@ export interface AuthSubmissionResult {
     phone?: string;
     role?: UserRole;
     restaurantId?: string;
+    isFirstTimeLogin?: boolean;
   };
 }
 
@@ -191,7 +238,62 @@ async function callAppsScriptBackend<T>(payload: Record<string, unknown>): Promi
 }
 
 /**
- * Authenticates user credentials with Google Apps Script backend
+ * Requests an OTP verification code for Signup or Forgot Password
+ */
+export const requestOtp = async (
+  identifier: string,
+  type: 'email' | 'mobile',
+  purpose: 'signup' | 'forgot_password' | string = 'signup'
+): Promise<OtpRequestResult> => {
+  try {
+    const response = await callAppsScriptBackend<OtpRequestResult>({
+      action: 'sendOtp',
+      destination: identifier,
+      type,
+      purpose,
+    });
+    return response;
+  } catch (err: any) {
+    return {
+      success: false,
+      message: 'Unable to connect to OTP verification service.',
+      destinationMasked: maskIdentifier(identifier, type),
+      expiresInSeconds: 0,
+      cooldownSeconds: 0,
+      serviceConfigured: false,
+      errors: { general: 'Unable to reach verification service. Please try again.' },
+    };
+  }
+};
+
+/**
+ * Verifies the customer's entered OTP code securely on the backend
+ */
+export const verifyOtp = async (
+  identifier: string,
+  otp: string,
+  purpose: 'signup' | 'forgot_password' | string = 'signup'
+): Promise<OtpVerificationResult> => {
+  try {
+    const response = await callAppsScriptBackend<OtpVerificationResult>({
+      action: 'verifyOtp',
+      destination: identifier,
+      otp,
+      purpose,
+    });
+    return response;
+  } catch (err: any) {
+    return {
+      success: false,
+      message: 'Failed to verify code. Please check your network connection.',
+      verified: false,
+      errors: { otp: 'Verification failed. Please try again.' },
+    };
+  }
+};
+
+/**
+ * Authenticates user credentials with backend using Email ID OR Mobile Number and Password
  */
 export const submitSignIn = async (
   data: LoginFormData,
@@ -201,27 +303,42 @@ export const submitSignIn = async (
   if (Object.keys(errors).length > 0) {
     return {
       success: false,
-      message: 'Please provide both your email and password.',
+      message: 'Please provide both your Email/Mobile and password.',
       errors,
     };
   }
 
-  const cleanEmail = data.email.trim().toLowerCase();
+  const rawIdent = (data.loginIdentifier || data.email || '').trim();
+
+  // Strict Flash Table Company Administration Authentication
+  if (selectedRole === 'company-admin' || rawIdent.toLowerCase() === 'admin@flashtable.com') {
+    if (selectedRole !== 'company-admin') {
+      return {
+        success: false,
+        message: 'Security Alert: Company Administrator accounts cannot be accessed via customer or restaurant owner login.',
+        errors: { general: 'Company Admin accounts must log in via the dedicated Company Administration portal.' },
+      };
+    }
+  }
 
   try {
     const response = await callAppsScriptBackend<{
       success: boolean;
       message: string;
+      isFirstTimeLogin?: boolean;
       user?: {
         userId?: string;
         fullName?: string;
         email?: string;
         mobile?: string | number;
         role?: string;
+        restaurantId?: string;
+        isFirstTimeLogin?: boolean;
       };
     }>({
       action: 'login',
-      email: cleanEmail,
+      loginIdentifier: rawIdent,
+      email: rawIdent.includes('@') ? rawIdent.toLowerCase() : '',
       password: data.password,
       role: selectedRole,
     });
@@ -235,15 +352,18 @@ export const submitSignIn = async (
         ? `+91 ${phone10.slice(0, 5)} ${phone10.slice(5)}`
         : rawMobile || '+91 98450 12260';
 
+      const isFirstTime = Boolean(response.isFirstTimeLogin || returnedUser?.isFirstTimeLogin);
+
       const session: AuthenticatedUserSession = {
         userId: returnedUser?.userId,
-        fullName: returnedUser?.fullName || (selectedRole === 'restaurant-owner' ? (cleanEmail.includes('rohan') ? 'Rohan' : 'Arjun Rao') : 'Customer'),
-        email: returnedUser?.email || cleanEmail,
+        fullName: returnedUser?.fullName || (selectedRole === 'restaurant-owner' ? (rawIdent.includes('rohan') ? 'Rohan' : 'Arjun Rao') : 'Customer'),
+        email: returnedUser?.email || (rawIdent.includes('@') ? rawIdent.toLowerCase() : ''),
         mobile: phone10 || rawMobile,
         phone: formattedPhone,
         role: (returnedUser?.role as UserRole) || selectedRole,
         signedInAt: new Date().toISOString(),
         restaurantId: (returnedUser as any)?.restaurantId || undefined,
+        isFirstTimeLogin: isFirstTime,
       };
 
       saveStoredSession(session);
@@ -251,20 +371,21 @@ export const submitSignIn = async (
       return {
         success: true,
         message: response.message || 'Login successful.',
+        isFirstTimeLogin: isFirstTime,
         userSummary: {
           userId: session.userId,
           fullName: session.fullName,
           email: session.email,
           phone: session.phone,
-          mobileNumber: session.phone,
+          mobileNumber: session.mobile,
           role: session.role,
           restaurantId: session.restaurantId,
+          isFirstTimeLogin: isFirstTime,
         },
       };
     }
 
-    // Backend returned unsuccessful authentication
-    const errorMsg = response?.message || 'Invalid email, password or role.';
+    const errorMsg = response?.message || 'Invalid email/mobile number, password or role.';
     return {
       success: false,
       message: errorMsg,
@@ -284,11 +405,12 @@ export const submitSignIn = async (
 };
 
 /**
- * Creates a new account in Google Sheets via Google Apps Script backend
+ * Creates a new customer account after successful OTP verification
  */
 export const submitSignUp = async (
   data: SignUpFormData,
-  selectedRole: UserRole = 'customer'
+  selectedRole: UserRole = 'customer',
+  verificationToken?: string
 ): Promise<AuthSubmissionResult> => {
   const errors = validateSignUpForm(data);
   if (Object.keys(errors).length > 0) {
@@ -309,56 +431,58 @@ export const submitSignUp = async (
     : data.mobileNumber.trim();
 
   try {
-    // Send signup request to Google Apps Script Web App without confirmPassword
     const response = await callAppsScriptBackend<{
       success: boolean;
       message: string;
       userId?: string;
+      isFirstTimeLogin?: boolean;
+      user?: any;
     }>({
       action: 'signup',
+      signupMethod: data.signupMethod,
       fullName: data.fullName.trim(),
       email: cleanEmail,
       mobile: phone10,
       password: data.password,
       role: selectedRole,
+      verificationToken,
     });
 
     if (response && response.success) {
       const session: AuthenticatedUserSession = {
-        userId: response.userId,
+        userId: response.userId || response.user?.userId || `USR-${Date.now()}`,
         fullName: data.fullName.trim(),
         email: cleanEmail,
         mobile: phone10,
         phone: formattedPhone,
         role: selectedRole,
         signedInAt: new Date().toISOString(),
+        isFirstTimeLogin: true, // Marked true for first-time registration!
       };
 
       saveStoredSession(session);
 
       return {
         success: true,
-        message: response.message || 'Account created successfully.',
+        message: response.message || 'Account created and verified successfully.',
+        isFirstTimeLogin: true,
         userSummary: {
-          userId: response.userId,
+          userId: session.userId,
           fullName: session.fullName,
           email: session.email,
           phone: session.phone,
           mobileNumber: session.phone,
           role: session.role,
+          isFirstTimeLogin: true,
         },
       };
     }
 
-    // Backend error (e.g. duplicate email, etc.)
     const errorMsg = response?.message || 'Unable to create account.';
-    const isEmailDuplicate = errorMsg.toLowerCase().includes('already exists') || errorMsg.toLowerCase().includes('email');
-
     return {
       success: false,
       message: errorMsg,
       errors: {
-        email: isEmailDuplicate ? errorMsg : undefined,
         general: errorMsg,
       },
     };
@@ -370,6 +494,84 @@ export const submitSignUp = async (
         general: 'Unable to reach authentication server. Please check your connection and try again.',
       },
     };
+  }
+};
+
+/**
+ * Provisions a secure Company Administrator Profile restricted to authorized personnel
+ */
+export const setupInitialCompanyAdmin = async (
+  data: AdminSetupFormData
+): Promise<AuthSubmissionResult> => {
+  try {
+    const response = await callAppsScriptBackend<{
+      success: boolean;
+      message: string;
+      user?: {
+        userId: string;
+        fullName: string;
+        email: string;
+        role: UserRole;
+        phone: string;
+      };
+    }>({
+      action: 'setupCompanyAdmin',
+      masterKey: data.masterKey,
+      fullName: data.fullName,
+      email: data.email,
+      password: data.password,
+    });
+
+    if (response && response.success && response.user) {
+      const adminSession: AuthenticatedUserSession = {
+        userId: response.user.userId,
+        fullName: response.user.fullName,
+        email: response.user.email,
+        mobile: '9845000001',
+        phone: response.user.phone || '+91 98450 00001',
+        role: 'company-admin',
+        signedInAt: new Date().toISOString(),
+        isFirstTimeLogin: false,
+      };
+      saveStoredSession(adminSession);
+      return {
+        success: true,
+        message: response.message || 'Company Administrator setup completed.',
+        userSummary: adminSession,
+      };
+    }
+    return {
+      success: false,
+      message: response?.message || 'Admin setup failed.',
+      errors: { general: response?.message || 'Admin setup failed.' },
+    };
+  } catch {
+    return {
+      success: false,
+      message: 'Unable to reach admin setup service.',
+      errors: { general: 'Unable to reach admin setup service.' },
+    };
+  }
+};
+
+/**
+ * Resets password using verified OTP token
+ */
+export const resetPasswordWithOtp = async (
+  identifier: string,
+  verificationToken: string,
+  newPassword: string
+): Promise<{ success: boolean; message: string }> => {
+  try {
+    const response = await callAppsScriptBackend<{ success: boolean; message: string }>({
+      action: 'resetPasswordWithOtp',
+      identifier,
+      verificationToken,
+      newPassword,
+    });
+    return response;
+  } catch {
+    return { success: false, message: 'Password reset request failed. Please try again.' };
   }
 };
 

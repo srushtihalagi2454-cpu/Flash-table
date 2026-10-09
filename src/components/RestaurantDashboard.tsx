@@ -34,7 +34,9 @@ import {
   AlertCircle,
   User,
   Bus,
-  Package
+  Package,
+  Layers,
+  X
 } from 'lucide-react';
 import { 
   Restaurant, 
@@ -60,9 +62,10 @@ import { MenuManagementTab } from './MenuManagementTab';
 import { TravelBookingsTab } from './TravelBookingsTab';
 import { getStoredSession, saveStoredSession } from '../services/authService';
 import { getDiningClockSession } from '../services/diningTimerService';
-import { getRestaurantReservationsFromBackend } from '../services/reservationService';
+import { getRestaurantReservationsFromBackend, updateReservationTimesOnBackend } from '../services/reservationService';
 import { getRestaurantSmartArrivalFromBackend } from '../services/smartArrivalService';
 import { getRestaurantFoodOrdersFromBackend } from '../services/foodService';
+import { getDefaultFloors } from '../utils/floorUtils';
 import { formatINR } from '../utils/priceUtils';
 import { 
   formatDistance, 
@@ -152,13 +155,22 @@ export const RestaurantDashboard: React.FC<RestaurantDashboardProps> = ({
   const [profileOwnerName, setProfileOwnerName] = useState(activeRestaurant.ownerName || 'Vikramaditya Rathore');
   const [profileAddress, setProfileAddress] = useState(activeRestaurant.address || '');
   const [profileCustomerCare, setProfileCustomerCare] = useState(activeRestaurant.customerCareNumber || activeRestaurant.contactNumber || '+91 98450 12260');
+  const [profileNumberOfFloors, setProfileNumberOfFloors] = useState<number>(activeRestaurant.numberOfFloors || activeRestaurant.floors?.length || 2);
   const [isProfileSaved, setIsProfileSaved] = useState(false);
+
+  // Manual Time In & Time Out Editing State (Restaurant Side)
+  const [editingTimesReservation, setEditingTimesReservation] = useState<Reservation | null>(null);
+  const [restaurantTimeIn, setRestaurantTimeIn] = useState<string>('');
+  const [restaurantTimeOut, setRestaurantTimeOut] = useState<string>('');
+  const [restaurantTimeReason, setRestaurantTimeReason] = useState<string>('');
+  const [isSavingRestaurantTimes, setIsSavingRestaurantTimes] = useState<boolean>(false);
 
   useEffect(() => {
     setProfileName(activeRestaurant.name || '');
     setProfileOwnerName(activeRestaurant.ownerName || 'Vikramaditya Rathore');
     setProfileAddress(activeRestaurant.address || '');
     setProfileCustomerCare(activeRestaurant.customerCareNumber || activeRestaurant.contactNumber || '+91 98450 12260');
+    setProfileNumberOfFloors(activeRestaurant.numberOfFloors || activeRestaurant.floors?.length || 2);
   }, [activeRestaurant]);
 
   // Authenticated restaurant owner session
@@ -173,6 +185,9 @@ export const RestaurantDashboard: React.FC<RestaurantDashboardProps> = ({
       return;
     }
 
+    const floorCount = Math.max(1, Math.min(15, Number(profileNumberOfFloors) || 2));
+    const generatedFloors = getDefaultFloors(floorCount);
+
     const updated = {
       ...activeRestaurant,
       name: profileName.trim(),
@@ -180,6 +195,8 @@ export const RestaurantDashboard: React.FC<RestaurantDashboardProps> = ({
       address: profileAddress.trim(),
       customerCareNumber: profileCustomerCare.trim(),
       contactNumber: profileCustomerCare.trim(),
+      numberOfFloors: floorCount,
+      floors: generatedFloors,
     };
     setActiveRestaurant(updated);
     if (onUpdateRestaurantDetails) {
@@ -190,6 +207,9 @@ export const RestaurantDashboard: React.FC<RestaurantDashboardProps> = ({
         customerCareNumber: profileCustomerCare.trim(),
       });
     }
+    if (onUpdateRestaurantFloors) {
+      onUpdateRestaurantFloors(activeRestaurant.id, generatedFloors);
+    }
 
     try {
       localStorage.setItem(`flashtable_restaurant_${activeRestaurant.id}`, JSON.stringify(updated));
@@ -197,9 +217,65 @@ export const RestaurantDashboard: React.FC<RestaurantDashboardProps> = ({
 
     setIsProfileSaved(true);
     if (onToast) {
-      onToast(`Restaurant profile updated! Diners now see "${profileName.trim()}" and Customer Care: ${profileCustomerCare.trim()}.`);
+      onToast(`Restaurant profile updated! Configured ${floorCount} floor(s) (${generatedFloors.map(f => f.name).join(', ')}).`);
     }
     setTimeout(() => setIsProfileSaved(false), 4000);
+  };
+
+  const handleSaveStaffTimeInOut = async () => {
+    if (!editingTimesReservation || !restaurantTimeIn.trim() || !restaurantTimeOut.trim()) return;
+    setIsSavingRestaurantTimes(true);
+
+    try {
+      const prevIn = editingTimesReservation.timeIn;
+      const prevOut = editingTimesReservation.timeOut;
+
+      await updateReservationTimesOnBackend({
+        reservationId: editingTimesReservation.id,
+        timeIn: restaurantTimeIn.trim(),
+        timeOut: restaurantTimeOut.trim(),
+        updatedBy: ownerSession?.fullName || 'Host Staff',
+        updatedRole: 'restaurant-owner',
+        previousTimeIn: prevIn,
+        previousTimeOut: prevOut,
+        restaurantId: activeRestaurant.id,
+        restaurantName: activeRestaurant.name,
+        reason: restaurantTimeReason.trim() || 'Restaurant staff manual adjustment',
+      });
+
+      const nextReservations = reservations.map((r) =>
+        r.id === editingTimesReservation.id
+          ? {
+              ...r,
+              timeIn: restaurantTimeIn.trim(),
+              timeOut: restaurantTimeOut.trim(),
+              timeSlot: `${restaurantTimeIn.trim()} → ${restaurantTimeOut.trim()}`,
+              lastUpdated: {
+                updatedAt: new Date().toISOString(),
+                updatedBy: ownerSession?.fullName || 'Host Staff',
+                updatedRole: 'restaurant-staff',
+                fieldModified: 'Time In & Out',
+                previousValue: `${prevIn || ''} → ${prevOut || ''}`,
+                newValue: `${restaurantTimeIn.trim()} → ${restaurantTimeOut.trim()}`,
+                reason: restaurantTimeReason.trim() || 'Restaurant staff manual adjustment',
+              },
+            }
+          : r
+      );
+
+      if (onSyncReservations) {
+        onSyncReservations(nextReservations);
+      }
+
+      if (onToast) {
+        onToast(`Dining schedule updated for ${editingTimesReservation.customerName}: In at ${restaurantTimeIn.trim()}, Out at ${restaurantTimeOut.trim()}.`);
+      }
+      setEditingTimesReservation(null);
+    } catch (err: any) {
+      if (onToast) onToast(`Error updating times: ${err?.message || 'Failed to save'}`);
+    } finally {
+      setIsSavingRestaurantTimes(false);
+    }
   };
   const [selectedSlot, setSelectedSlot] = useState<string>('07:30 PM');
   const [qrScanInput, setQrScanInput] = useState<string>('');
@@ -2414,6 +2490,29 @@ export const RestaurantDashboard: React.FC<RestaurantDashboardProps> = ({
                     </p>
                   </div>
 
+                  <div>
+                    <label htmlFor="admin-number-of-floors" className="block text-[11px] font-bold uppercase tracking-wider text-[#2C3333]/70 mb-1">
+                      Number of Floors *
+                    </label>
+                    <div className="relative">
+                      <Layers className="w-4 h-4 text-[#4F6F52] absolute left-3 top-3" />
+                      <input
+                        id="admin-number-of-floors"
+                        type="number"
+                        min={1}
+                        max={15}
+                        required
+                        value={profileNumberOfFloors}
+                        onChange={(e) => setProfileNumberOfFloors(Number(e.target.value) || 1)}
+                        className="w-full pl-9 pr-3 py-2.5 text-xs font-mono font-bold text-[#4F6F52] bg-white border border-[#E8E6E1] rounded-xl outline-none focus:border-[#4F6F52] focus:ring-1 focus:ring-[#4F6F52]"
+                        placeholder="e.g. 3"
+                      />
+                    </div>
+                    <p className="text-[10px] text-[#2C3333]/50 mt-1">
+                      Total floors in your restaurant. Entering 3 creates Ground Floor, Floor 1, Floor 2. Entering 5 creates Ground Floor, Floor 1, Floor 2, Floor 3, Floor 4.
+                    </p>
+                  </div>
+
                   <div className="pt-2">
                     <button
                       type="submit"
@@ -2948,6 +3047,25 @@ export const RestaurantDashboard: React.FC<RestaurantDashboardProps> = ({
                       </button>
                     )}
 
+                    {/* Manual Time In / Time Out — Restaurant Side */}
+                    {res.status !== 'cancelled' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingTimesReservation(res);
+                          setRestaurantTimeIn(res.timeIn || '07:30 PM');
+                          setRestaurantTimeOut(res.timeOut || '09:15 PM');
+                          setRestaurantTimeReason('');
+                        }}
+                        className="px-3.5 py-1.5 bg-white hover:bg-[#FAF9F6] text-[#4F6F52] border border-[#4F6F52]/30 text-xs font-bold uppercase tracking-wider rounded-full transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                        title="Manually enter or adjust diner's Time In and Time Out"
+                        id={`btn-edit-staff-times-${res.id}`}
+                      >
+                        <Clock className="w-3.5 h-3.5 text-[#4F6F52]" />
+                        <span>Edit Times</span>
+                      </button>
+                    )}
+
                     {!isCheckedIn && !isCompleted && res.status !== 'cancelled' && (
                       <button
                         type="button"
@@ -3050,6 +3168,100 @@ export const RestaurantDashboard: React.FC<RestaurantDashboardProps> = ({
           onSendBill={handleSendBillToCustomer}
           onClose={() => setSelectedBillReservation(null)}
         />
+      )}
+
+      {/* Staff Manual Time In / Time Out Modal */}
+      {editingTimesReservation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl border border-[#E8E6E1] w-full max-w-md p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E8E6E1]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-[#4F6F521A] text-[#4F6F52] flex items-center justify-center">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-[#2C3333]">Update Time In & Time Out</h3>
+                  <p className="text-xs text-stone-500">
+                    {editingTimesReservation.customerName} • Table {editingTimesReservation.tableNumber}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setEditingTimesReservation(null)}
+                className="w-8 h-8 rounded-full bg-stone-100 hover:bg-stone-200 flex items-center justify-center text-stone-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-[#2C3333] mb-1">
+                  Time In (Manual Entry):
+                </label>
+                <input
+                  type="text"
+                  value={restaurantTimeIn}
+                  onChange={(e) => setRestaurantTimeIn(e.target.value)}
+                  placeholder="e.g. 07:30 PM"
+                  className="w-full px-3.5 py-2 bg-[#FAF9F6] border border-[#E8E6E1] rounded-xl text-xs font-bold font-mono text-[#2C3333] focus:border-[#4F6F52] outline-none"
+                  id="staff-timein-input"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#2C3333] mb-1">
+                  Time Out (Manual Entry):
+                </label>
+                <input
+                  type="text"
+                  value={restaurantTimeOut}
+                  onChange={(e) => setRestaurantTimeOut(e.target.value)}
+                  placeholder="e.g. 09:15 PM"
+                  className="w-full px-3.5 py-2 bg-[#FAF9F6] border border-[#E8E6E1] rounded-xl text-xs font-bold font-mono text-[#2C3333] focus:border-[#4F6F52] outline-none"
+                  id="staff-timeout-input"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#2C3333] mb-1">
+                  Reason / Modification Note (Audit Trail):
+                </label>
+                <input
+                  type="text"
+                  value={restaurantTimeReason}
+                  onChange={(e) => setRestaurantTimeReason(e.target.value)}
+                  placeholder="e.g. Customer arrived 15 mins late; session extended"
+                  className="w-full px-3.5 py-2 bg-[#FAF9F6] border border-[#E8E6E1] rounded-xl text-xs text-[#2C3333] focus:border-[#4F6F52] outline-none"
+                  id="staff-timereason-input"
+                />
+              </div>
+
+              <p className="text-[11px] text-stone-500 bg-[#FAF9F6] p-2.5 rounded-xl border border-[#E8E6E1]">
+                Changes are saved to the reservation record, reflected immediately on the diner's view, and logged to the Company Administration audit trail.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditingTimesReservation(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-stone-600 hover:bg-stone-100 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isSavingRestaurantTimes || !restaurantTimeIn.trim() || !restaurantTimeOut.trim()}
+                onClick={handleSaveStaffTimeInOut}
+                className="px-5 py-2 rounded-xl bg-[#4F6F52] hover:bg-[#3D5A40] disabled:opacity-50 text-white text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer shadow-xs"
+                id="staff-save-times-btn"
+              >
+                {isSavingRestaurantTimes ? 'Saving...' : 'Save & Sync Times'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
