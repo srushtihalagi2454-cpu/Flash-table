@@ -58,9 +58,14 @@ export const DiningBillModal: React.FC<DiningBillModalProps> = ({
   const [isPersistingBill, setIsPersistingBill] = useState(false);
 
   const foodAndBeverageTotal = bill.subtotal;
-  const depositAmount = typeof reservation.depositAmount === 'number' ? reservation.depositAmount : 0;
+  // Reservation table booking deposit (defaults to ₹200 credited against the bill)
+  const depositAmount = typeof reservation.depositAmount === 'number' && reservation.depositAmount > 0 
+    ? reservation.depositAmount 
+    : 200;
   const depositAdjustment = -depositAmount;
-  const finalAmount = depositAmount > 0 ? Math.max(0, bill.grossTotal - depositAmount) : bill.netPayable;
+  // Calculate final amount after deducting the ₹200 table booking deposit
+  const grossBillTotal = bill.grossTotal > 0 ? bill.grossTotal : (foodAndBeverageTotal + bill.gstAmount + bill.serviceCharge);
+  const finalAmount = Math.max(0, grossBillTotal - depositAmount);
 
   useEffect(() => {
     if (reservation.billSent) {
@@ -339,35 +344,35 @@ export const DiningBillModal: React.FC<DiningBillModalProps> = ({
 
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between items-center text-[#2C3333]">
-                  <span className="font-medium text-[#2C3333]/80">Food & Beverages</span>
+                  <span className="font-medium text-[#2C3333]/80">Food & Beverages Subtotal</span>
                   <span className="font-semibold text-sm">₹{foodAndBeverageTotal.toLocaleString()}</span>
                 </div>
 
-                {depositAmount > 0 ? (
-                  <>
-                    <div className="flex justify-between items-center text-[#2C3333]">
-                      <span className="font-medium text-[#2C3333]/80">Reservation Deposit</span>
-                      <span className="font-semibold text-sm">₹{depositAmount.toLocaleString()}</span>
-                    </div>
+                <div className="flex justify-between items-center text-[#2C3333]/70">
+                  <span>Taxes (GST 5% + Service 5%)</span>
+                  <span className="font-medium">₹{(bill.gstAmount + bill.serviceCharge).toLocaleString()}</span>
+                </div>
 
-                    <div className="flex justify-between items-center text-[#4F6F52] font-semibold">
-                      <span>Deposit Adjustment</span>
-                      <span className="text-sm">-₹{Math.abs(depositAdjustment).toLocaleString()}</span>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex justify-between items-center text-[#4F6F52] bg-[#4F6F5212] px-2.5 py-1.5 rounded-lg border border-[#4F6F52]/20">
-                    <span className="font-medium text-xs flex items-center gap-1.5">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-[#4F6F52]" />
-                      <span>Table Booking Deposit</span>
-                    </span>
-                    <span className="font-bold text-xs">₹200 (Credited against bill)</span>
+                <div className="flex justify-between items-center text-[#2C3333] pt-1 border-t border-[#E8E6E1]/60">
+                  <span className="font-semibold">Gross Bill Amount</span>
+                  <span className="font-semibold text-sm">₹{grossBillTotal.toLocaleString()}</span>
+                </div>
+
+                {/* Minus 200 Rupees Table Booking Deposit */}
+                <div className="flex justify-between items-center text-emerald-800 bg-emerald-50/80 px-2.5 py-1.5 rounded-lg border border-emerald-200 font-bold">
+                  <span className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Minus Table Booking Deposit</span>
+                  </span>
+                  <span className="text-sm font-mono text-emerald-700">-₹{depositAmount.toLocaleString()}</span>
+                </div>
+
+                <div className="pt-2 border-t-2 border-[#2C3333]/15 flex justify-between items-center text-sm font-bold text-[#2C3333]">
+                  <div>
+                    <span className="block">Total Payable Amount</span>
+                    <span className="text-[10px] text-stone-500 font-normal block">(After minusing ₹{depositAmount} deposit)</span>
                   </div>
-                )}
-
-                <div className="pt-2.5 border-t border-[#E8E6E1] flex justify-between items-center text-sm font-bold text-[#2C3333]">
-                  <span>Final Amount</span>
-                  <span className="text-xl font-bold font-serif text-[#2C3333]">
+                  <span className="text-2xl font-bold font-serif text-[#2C3333]">
                     ₹{finalAmount.toLocaleString()}
                   </span>
                 </div>

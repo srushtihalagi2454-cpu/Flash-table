@@ -142,8 +142,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   
   // Confirmed booking state
   const [createdReservation, setCreatedReservation] = useState<Reservation | null>(null);
+  const [showCancellationPolicyPopup, setShowCancellationPolicyPopup] = useState(false);
+  const [cancellationGraceSeconds, setCancellationGraceSeconds] = useState(180); // 3 mins (180s)
   const [showFoodOrderModal, setShowFoodOrderModal] = useState(false);
   const [bookedFoodOrder, setBookedFoodOrder] = useState<FoodOrder | null>(null);
+
+  // Countdown timer for 3-minute cancellation grace window
+  useEffect(() => {
+    if (!showCancellationPolicyPopup) return;
+    const interval = setInterval(() => {
+      setCancellationGraceSeconds((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [showCancellationPolicyPopup]);
 
   const handleFoodOrderSaved = (order: FoodOrder) => {
     setBookedFoodOrder(order);
@@ -447,6 +458,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       onCompleteBooking(newRes);
       setIsSavingToBackend(false);
       setStep('confirmed');
+      setShowCancellationPolicyPopup(true);
+      setCancellationGraceSeconds(180);
     } catch (err: any) {
       setBackendError(err?.message || 'Network error: Failed to connect to reservation backend.');
       setIsSavingToBackend(false);
@@ -1530,6 +1543,99 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           isDuringBooking={true}
           onSkip={() => setShowFoodOrderModal(false)}
         />
+      )}
+      {/* POPUP MESSAGE: Cancel booked table within 3 mins or penalty applies (1st free, 2nd ₹100) */}
+      {showCancellationPolicyPopup && createdReservation && (
+        <div 
+          className="fixed inset-0 z-60 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
+          id="cancellation-policy-popup-modal"
+        >
+          <div 
+            className="bg-white w-full max-w-md rounded-3xl border-2 border-emerald-300 shadow-2xl p-6 space-y-5 animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
+                  <Clock className="w-6 h-6 text-emerald-600 animate-pulse" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full inline-block">
+                    Table Booking Policy
+                  </span>
+                  <h4 className="text-lg font-bold font-serif text-[#2C3333] mt-0.5">
+                    Cancellation Policy Notice
+                  </h4>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowCancellationPolicyPopup(false)}
+                className="w-8 h-8 rounded-full bg-stone-100 hover:bg-stone-200 text-stone-600 flex items-center justify-center cursor-pointer transition-colors"
+                title="Close Notice"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Core User Request Message */}
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-50 via-white to-amber-50 border border-emerald-200 space-y-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-emerald-950 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>Free 3-Minute Cancellation Window</span>
+                </span>
+                <span className="font-mono font-bold text-emerald-900 bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-300">
+                  {Math.floor(cancellationGraceSeconds / 60)}:{String(cancellationGraceSeconds % 60).padStart(2, '0')}
+                </span>
+              </div>
+
+              <p className="text-xs text-[#2C3333] leading-relaxed font-medium">
+                You can <strong className="text-emerald-950 font-bold underline">cancel the booked table within 3 mins</strong> without any charge! If you cancel after that window, penalties apply:
+              </p>
+
+              <div className="space-y-2 pt-1 text-xs">
+                <div className="flex items-start gap-2 p-2.5 rounded-xl bg-white border border-emerald-200 text-emerald-900">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold">1st Cancellation: Free (₹0 Penalty)</span>
+                    <p className="text-[11px] text-[#2C3333]/70">Your first cancellation on FlashTable is completely free of charge.</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-2 p-2.5 rounded-xl bg-white border border-rose-200 text-rose-900">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold text-rose-800">From 2nd Cancellation: ₹100 Penalty</span>
+                    <p className="text-[11px] text-[#2C3333]/70">A ₹100 penalty fee will be taken for your second and any subsequent table cancellations.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Bill deduction reminder: ₹200 credited against bill */}
+            <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 text-xs text-stone-700 flex items-start gap-2.5">
+              <Receipt className="w-4 h-4 text-[#4F6F52] shrink-0 mt-0.5" />
+              <p className="text-[11px] leading-relaxed">
+                <strong className="text-[#2C3333]">Bill Deduction Guarantee:</strong> When generating your final bill, <strong className="text-[#4F6F52]">₹200 will be minused from your bill amount</strong> before generating the total payable amount!
+              </p>
+            </div>
+
+            {/* Action buttons */}
+            <div className="pt-1 flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowCancellationPolicyPopup(false)}
+                className="flex-1 py-3 px-4 rounded-full bg-[#2C3333] hover:bg-[#4F6F52] text-white text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer text-center shadow-sm"
+                id="btn-understand-cancellation-policy"
+              >
+                I Understand • Got It
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

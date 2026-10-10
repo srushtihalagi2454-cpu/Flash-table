@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   AlertTriangle, 
   X, 
@@ -42,17 +42,42 @@ export const CancellationPenaltyModal: React.FC<CancellationPenaltyModalProps> =
   userId,
   allReservations,
 }) => {
-  // Determine if this is the customer's 1st cancellation or a 2nd+ cancellation
+  // Track live countdown for 3-minute grace window if applicable
+  const [nowTimestamp, setNowTimestamp] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowTimestamp(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Determine cancellation policy:
+  // 1) Free if within 3 minutes of booking
+  // 2) 1st cancellation free
+  // 3) 2nd+ cancellation after 3 minutes charges ₹100 penalty
   const plan = prepareCancellationPlan(
     userId || reservation.userId,
     reservation.customerPhone,
-    allReservations
+    allReservations,
+    reservation.createdAt
   );
-  const isFirstCancellation = plan.isFirstCancellation;
+
+  // Recalculate seconds remaining in real time
+  const createdMs = reservation.createdAt ? new Date(reservation.createdAt).getTime() : NaN;
+  const isWithinGrace3Mins = !isNaN(createdMs)
+    ? Math.max(0, (3 * 60 * 1000) - (nowTimestamp - createdMs)) > 0
+    : plan.isWithin3Minutes;
+
+  const secondsRemaining = !isNaN(createdMs)
+    ? Math.max(0, Math.floor(((3 * 60 * 1000) - (nowTimestamp - createdMs)) / 1000))
+    : plan.secondsRemainingInGrace;
+
+  const isFreeCancellation = isWithinGrace3Mins || plan.isFirstCancellation;
   const cancellationAttemptCount = plan.attemptNumber;
 
   // Step 1: 'notice' (Review policy, acknowledge terms)
-  // Step 2: 'payment' (Process ₹100 penalty fee - only for 2nd and subsequent cancellations)
+  // Step 2: 'payment' (Process ₹100 penalty fee - only for 2nd and subsequent cancellations after 3 mins)
   // Step 3: 'success' (Cancellation completed with audit record and warning banner)
   const [step, setStep] = useState<'notice' | 'payment' | 'success'>('notice');
 
@@ -75,19 +100,28 @@ export const CancellationPenaltyModal: React.FC<CancellationPenaltyModalProps> =
 
   const effectiveCareNumber = customerCareNumber || reservation.restaurantCustomerCareNumber || '+91 98450 12260';
 
-  // Handle First Cancellation (Immediate free cancellation with no payment required)
-  const handleConfirmFirstCancellation = () => {
+  // Handle Free Cancellation (either within 3 minutes of booking, OR customer's 1st cancellation)
+  const handleConfirmFreeCancellation = () => {
     setIsProcessing(true);
     setTimeout(() => {
       setIsProcessing(false);
 
-      const nowIso = new Date().toISOString();
       const formattedDate = new Date().toLocaleString('en-IN', {
         dateStyle: 'medium',
         timeStyle: 'short',
         timeZone: 'Asia/Kolkata',
       });
-      const txId = `FT-FREE-${Math.floor(100000 + Math.random() * 900000)}`;
+      const txId = isWithinGrace3Mins
+        ? `FT-3MIN-FREE-${Math.floor(100000 + Math.random() * 900000)}`
+        : `FT-FREE-${Math.floor(100000 + Math.random() * 900000)}`;
+
+      const cancellationCountNumber = isWithinGrace3Mins
+        ? Math.max(1, cancellationAttemptCount)
+        : 1;
+
+      const recordNotes = isWithinGrace3Mins
+        ? 'Cancelled within 3-minute grace window. Cancellation is free with ₹0 penalty.'
+        : 'First cancellation exemption: 1st cancellation is free of charge (₹0 penalty). Warning displayed that future cancellations incur ₹100 penalty.';
 
       const record: CancellationRecord = {
         reservationId: reservation.id,
@@ -104,16 +138,16 @@ export const CancellationPenaltyModal: React.FC<CancellationPenaltyModalProps> =
         timeOut: displayTimeOut,
         tableNumber: reservation.tableNumber,
         cancellationDate: `${formattedDate} IST`,
-        cancellationCount: 1, // First cancellation
-        penaltyAmount: 0, // ₹0 penalty fee for 1st cancellation
+        cancellationCount: cancellationCountNumber,
+        penaltyAmount: 0, // ₹0 penalty
         cancellationPenalty: 0,
-        penaltyApplicability: 'none_first_cancellation',
+        penaltyApplicability: isWithinGrace3Mins ? 'none_first_cancellation' : 'none_first_cancellation',
         paymentStatus: 'waived',
         cancellationStatus: 'cancelled',
         penaltyStatus: 'waived',
-        paymentMethod: 'Free (First Cancellation Exemption)',
+        paymentMethod: isWithinGrace3Mins ? 'Free (3-Minute Grace Window)' : 'Free (First Cancellation Exemption)',
         transactionId: txId,
-        notes: 'First cancellation: customer was allowed to cancel without penalty. Warning displayed for future cancellations.',
+        notes: recordNotes,
       };
 
       recordCancellationToStorage(record);
@@ -204,11 +238,11 @@ export const CancellationPenaltyModal: React.FC<CancellationPenaltyModalProps> =
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${
-                  isFirstCancellation
+                  isFreeCancellation
                     ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
                     : 'bg-amber-50 border border-amber-200 text-amber-600'
                 }`}>
-                  {isFirstCancellation ? (
+                  {isFreeCancellation ? (
                     <CheckCircle2 className="w-5 h-5 text-emerald-600" />
                   ) : (
                     <AlertTriangle className="w-5 h-5 text-amber-600" />
@@ -216,13 +250,17 @@ export const CancellationPenaltyModal: React.FC<CancellationPenaltyModalProps> =
                 </div>
                 <div>
                   <div className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                    isFirstCancellation
+                    isWithinGrace3Mins
                       ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-                      : 'bg-rose-50 border border-rose-200 text-rose-700'
+                      : plan.isFirstCancellation
+                        ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                        : 'bg-rose-50 border border-rose-200 text-rose-700'
                   }`}>
-                    {isFirstCancellation
-                      ? '1st Cancellation • No Penalty (₹0)'
-                      : `Cancellation #${cancellationAttemptCount} • ₹100 Penalty Applies`}
+                    {isWithinGrace3Mins
+                      ? `Within 3 Mins Window (${secondsRemaining}s left) • Free (₹0)`
+                      : plan.isFirstCancellation
+                        ? '1st Cancellation • Free (₹0 Penalty)'
+                        : `Cancellation #${cancellationAttemptCount} • ₹100 Penalty Applies`}
                   </div>
                   <h3 className="text-xl font-bold font-serif text-[#2C3333] mt-0.5">
                     Cancel Table Reservation
@@ -240,45 +278,70 @@ export const CancellationPenaltyModal: React.FC<CancellationPenaltyModalProps> =
               </button>
             </div>
 
-            {/* Case 1: First Cancellation Banner */}
-            {isFirstCancellation ? (
-              <div className="p-4 rounded-2xl bg-emerald-50/80 border border-emerald-200 space-y-2.5">
+            {/* Case 1: Cancelled within 3 minutes grace window */}
+            {isWithinGrace3Mins ? (
+              <div className="p-4 rounded-2xl bg-emerald-50/90 border-2 border-emerald-300 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    First Cancellation: No Penalty (₹0)
+                    <Clock className="w-4 h-4 text-emerald-600" />
+                    Within 3 Minutes of Booking: Free Cancellation
                   </span>
                   <span className="text-xs font-bold text-emerald-700 bg-white/90 px-2.5 py-0.5 rounded-full border border-emerald-200 font-mono">
                     Fee: ₹0.00
                   </span>
                 </div>
                 <p className="text-xs text-[#2C3333]/80 leading-relaxed">
-                  As this is your <strong className="text-emerald-900 font-bold">first reservation cancellation</strong> on FlashTable, you can cancel <strong className="text-[#2C3333]">Table {reservation.tableNumber}</strong> at <strong className="text-[#2C3333]">{reservation.restaurantName}</strong> <span className="font-semibold text-emerald-800">without any penalty fee</span>. The table will be immediately freed for other diners.
+                  You can cancel your booked table <strong className="text-emerald-950 font-bold">within 3 minutes of booking</strong> with <strong className="text-emerald-800">no penalty</strong>! If not cancelled within 3 minutes, penalties apply (1st cancellation is free, and from 2nd cancellation ₹100 will be taken).
+                </p>
+                <div className="flex items-center justify-between bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-xs">
+                  <span className="text-emerald-800 font-semibold flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5" />
+                    Time remaining in 3-min free window:
+                  </span>
+                  <span className="font-mono font-bold text-emerald-950 bg-emerald-100/70 px-2 py-0.5 rounded-md">
+                    {Math.floor(secondsRemaining / 60)}:{String(secondsRemaining % 60).padStart(2, '0')}
+                  </span>
+                </div>
+              </div>
+            ) : plan.isFirstCancellation ? (
+              /* Case 2: 1st Cancellation is Free */
+              <div className="p-4 rounded-2xl bg-emerald-50/80 border border-emerald-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    1st Cancellation: Free (₹0 Penalty)
+                  </span>
+                  <span className="text-xs font-bold text-emerald-700 bg-white/90 px-2.5 py-0.5 rounded-full border border-emerald-200 font-mono">
+                    Fee: ₹0.00
+                  </span>
+                </div>
+                <p className="text-xs text-[#2C3333]/80 leading-relaxed">
+                  As this is your <strong className="text-emerald-900 font-bold">1st cancellation</strong> on FlashTable, you can cancel <strong className="text-[#2C3333]">Table {reservation.tableNumber}</strong> at <strong className="text-[#2C3333]">{reservation.restaurantName}</strong> <span className="font-semibold text-emerald-800">completely free of charge</span>! The table will be immediately freed.
                 </p>
                 <div className="pt-1.5 border-t border-emerald-200/80 flex items-start gap-1.5 text-[11px] text-amber-900 bg-amber-50/60 p-2.5 rounded-xl border border-amber-200/70">
                   <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <span>
-                    <strong className="font-bold">Important Notice:</strong> Any future cancellation will incur a <strong className="font-bold text-rose-700">₹100 cancellation penalty</strong>.
+                    <strong className="font-bold">Cancellation Policy Notice:</strong> 1st cancellation is free. From your 2nd cancellation onward, a <strong className="font-bold text-rose-700">₹100 penalty fee</strong> will be charged if not cancelled within 3 minutes of booking.
                   </span>
                 </div>
               </div>
             ) : (
-              /* Case 2: Second and Subsequent Cancellations Banner */
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 to-rose-50 border border-amber-200/80 space-y-2.5">
+              /* Case 3: 2nd and Subsequent Cancellations (> 3 mins) */
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 to-rose-50 border-2 border-rose-300 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold uppercase tracking-wider text-rose-700 flex items-center gap-1.5">
                     <AlertTriangle className="w-4 h-4 text-amber-600" />
-                    ₹100 Cancellation Penalty Applies
+                    ₹100 Penalty Applies (Past 3 Mins & 2nd+ Cancel)
                   </span>
-                  <span className="text-xs font-bold text-rose-600 bg-white/90 px-2.5 py-0.5 rounded-full border border-rose-200 font-mono">
+                  <span className="text-xs font-bold text-rose-700 bg-white px-2.5 py-0.5 rounded-full border border-rose-300 font-mono">
                     Penalty: ₹100.00
                   </span>
                 </div>
                 <p className="text-xs text-[#2C3333]/80 leading-relaxed">
-                  You have previously cancelled <strong className="font-bold text-[#2C3333]">{plan.priorCount} reservation(s)</strong>. In accordance with the FlashTable reservation policy, this cancellation (Cancellation #{cancellationAttemptCount}) incurs a mandatory <span className="font-bold text-rose-700">₹100 cancellation penalty</span>.
+                  Your 3-minute grace window has expired and this is your <strong className="font-bold text-[#2C3333]">Cancellation #{cancellationAttemptCount}</strong> (1st cancellation was free). In accordance with policy, <span className="font-bold text-rose-700">₹100 penalty will be taken</span> to complete this cancellation and release your table.
                 </p>
                 <p className="text-[11px] text-[#2C3333]/70">
-                  Your payment will be processed securely through the integrated payment system. Your table will be released only after your confirmation and successful payment.
+                  Your payment will be processed securely through the integrated gateway. Your table will be released only after successful payment.
                 </p>
               </div>
             )}
@@ -330,8 +393,8 @@ export const CancellationPenaltyModal: React.FC<CancellationPenaltyModalProps> =
               )}
             </div>
 
-            {/* Mandatory Acknowledgement Checkbox for 2nd+ Cancellations */}
-            {!isFirstCancellation && (
+            {/* Mandatory Acknowledgement Checkbox for 2nd+ Cancellations after 3 mins */}
+            {!isFreeCancellation && (
               <label className="p-3.5 rounded-2xl bg-rose-50/70 border border-rose-200/80 flex items-start gap-3 cursor-pointer select-none">
                 <input
                   type="checkbox"
@@ -342,7 +405,7 @@ export const CancellationPenaltyModal: React.FC<CancellationPenaltyModalProps> =
                 />
                 <span className="text-xs text-[#2C3333] leading-relaxed">
                   <strong className="font-bold text-rose-900 block">Confirm & Acknowledge Penalty:</strong>
-                  I acknowledge that a <span className="font-bold text-rose-700">₹100 cancellation penalty</span> applies to cancel this reservation and agree to settle this fee via the payment gateway.
+                  I acknowledge that after 3 mins and from 2nd cancellation, a <span className="font-bold text-rose-700">₹100 penalty will be taken</span> to cancel this table, and agree to settle this fee via the payment gateway.
                 </span>
               </label>
             )}
@@ -358,13 +421,13 @@ export const CancellationPenaltyModal: React.FC<CancellationPenaltyModalProps> =
                 Keep Table (Don't Cancel)
               </button>
 
-              {isFirstCancellation ? (
+              {isFreeCancellation ? (
                 <button
                   type="button"
-                  onClick={handleConfirmFirstCancellation}
+                  onClick={handleConfirmFreeCancellation}
                   disabled={isProcessing}
                   className="w-full py-3 px-4 rounded-full bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer shadow-sm text-center flex items-center justify-center gap-2 disabled:opacity-50"
-                  id="btn-confirm-first-cancellation"
+                  id="btn-confirm-free-cancellation"
                 >
                   {isProcessing ? (
                     <>

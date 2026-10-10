@@ -81,31 +81,77 @@ export interface CancellationPlan {
   priorCount: number;
   attemptNumber: number; // 1 for first cancellation, 2 for second, etc.
   isFirstCancellation: boolean;
-  penaltyAmount: number; // 0 for 1st cancellation, 100 for 2nd+
-  penaltyApplicability: 'none_first_cancellation' | 'applicable';
+  isWithin3Minutes: boolean; // Cancelled within 3 minutes of booking
+  minutesElapsed: number;
+  secondsRemainingInGrace: number;
+  penaltyAmount: number; // 0 for 1st cancellation or within 3 mins; 100 from 2nd cancellation after 3 mins
+  penaltyApplicability: 'none_within_3_mins' | 'none_first_cancellation' | 'applicable';
+  reasonText: string;
 }
 
 /**
  * Prepares the policy rules for an upcoming cancellation:
- * - First cancellation: ₹0 penalty fee, warning on completion.
- * - Second and subsequent cancellations: ₹100 penalty fee, acknowledgement & payment process required.
+ * - Free if within 3 minutes of booking (grace window).
+ * - Or 1st cancellation is free (₹0 penalty).
+ * - From 2nd cancellation after 3 minutes, ₹100 penalty fee is taken.
  */
 export function prepareCancellationPlan(
   userId?: string,
   customerPhone?: string,
-  reservations?: Reservation[]
+  reservations?: Reservation[],
+  reservationCreatedAt?: string
 ): CancellationPlan {
   const priorCount = getCustomerCancellationCount(userId, customerPhone, reservations);
   const attemptNumber = priorCount + 1;
   const isFirstCancellation = priorCount === 0;
-  const penaltyAmount = isFirstCancellation ? 0 : 100;
-  const penaltyApplicability = isFirstCancellation ? 'none_first_cancellation' : 'applicable';
+
+  // Calculate elapsed time since reservation was created
+  let minutesElapsed = 999;
+  let secondsRemainingInGrace = 0;
+  if (reservationCreatedAt) {
+    const createdTime = new Date(reservationCreatedAt).getTime();
+    if (!isNaN(createdTime)) {
+      const now = Date.now();
+      const diffMs = Math.max(0, now - createdTime);
+      minutesElapsed = diffMs / (60 * 1000);
+      const remainingMs = (3 * 60 * 1000) - diffMs;
+      secondsRemainingInGrace = Math.max(0, Math.floor(remainingMs / 1000));
+    }
+  }
+
+  const isWithin3Minutes = minutesElapsed <= 3;
+
+  // Penalty rules:
+  // 1) Cancelled within 3 minutes => FREE (0 penalty)
+  // 2) 1st cancellation => FREE (0 penalty)
+  // 3) 2nd+ cancellation after 3 minutes => ₹100 penalty
+  let penaltyAmount = 0;
+  let penaltyApplicability: 'none_within_3_mins' | 'none_first_cancellation' | 'applicable' = 'none_first_cancellation';
+  let reasonText = '';
+
+  if (isWithin3Minutes) {
+    penaltyAmount = 0;
+    penaltyApplicability = 'none_within_3_mins';
+    reasonText = `Cancelled within 3-minute grace window (${Math.round(minutesElapsed * 10) / 10} mins elapsed). No penalty charged.`;
+  } else if (isFirstCancellation) {
+    penaltyAmount = 0;
+    penaltyApplicability = 'none_first_cancellation';
+    reasonText = 'First cancellation exemption: 1st cancellation is free of charge. Warning issued for future cancellations.';
+  } else {
+    penaltyAmount = 100;
+    penaltyApplicability = 'applicable';
+    reasonText = `Cancellation #${attemptNumber} after 3-minute window: ₹100 cancellation penalty charged.`;
+  }
 
   return {
     priorCount,
     attemptNumber,
     isFirstCancellation,
+    isWithin3Minutes,
+    minutesElapsed,
+    secondsRemainingInGrace,
     penaltyAmount,
     penaltyApplicability,
+    reasonText,
   };
 }
