@@ -112,8 +112,11 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
                 {cuisine}
               </span>
             ))}
-            <span className="text-[10px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-[#4F6F521A] text-[#4F6F52] border border-[#4F6F52]/20">
-              ₹{restaurant.costForTwo} for 2
+            <span className="text-[10px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-[#4F6F521A] text-[#4F6F52] border border-[#4F6F52]/20 font-serif flex items-center gap-1">
+              <span className="line-through text-stone-600 font-semibold">₹{Math.round(restaurant.costForTwo * 1.25)}</span>
+              <span className="text-stone-400 font-bold">/</span>
+              <span className="text-[#4F6F52] font-bold">₹{restaurant.costForTwo}</span>
+              <span className="font-sans text-[9px] text-stone-500">for 2</span>
             </span>
           </div>
 

@@ -120,7 +120,9 @@ export interface MenuItem {
   id: string;
   name: string;
   description: string;
-  price: number; // in INR (₹)
+  price: number; // in INR (₹) - current active / selling rate
+  actualPrice?: number; // in INR (₹) - original / standard actual rate
+  discountPrice?: number; // in INR (₹) - discounted / offer rate
   category: string; // e.g. "Starters", "Mains", "Breads & Rice", "Desserts", "Beverages"
   dietary: DietaryType;
   imageUrl?: string;
@@ -633,4 +635,34 @@ export interface SmartArrivalRecord {
   customerName?: string;
   customerPhone?: string;
   tableNumber?: string;
+}
+
+export type SubscriptionPlanId = 'free-month' | '3-months' | '6-months' | '12-months';
+
+export interface RestaurantSubscriptionPlan {
+  id: SubscriptionPlanId;
+  name: string;
+  durationMonths: number;
+  durationLabel: string;
+  price: number; // in INR (₹)
+  regularPrice?: number; // original price for comparison
+  badge?: string;
+  tagline: string;
+  isFree?: boolean;
+  isPopular?: boolean;
+  isBestValue?: boolean;
+  features: string[];
+}
+
+export interface RestaurantSubscriptionStatus {
+  restaurantId: string;
+  planId: SubscriptionPlanId;
+  planName: string;
+  startDate: string;
+  expiryDate: string;
+  daysRemaining: number;
+  amountPaid: number;
+  status: 'active' | 'expiring_soon' | 'expired';
+  paymentMethod?: string;
+  transactionId?: string;
 }

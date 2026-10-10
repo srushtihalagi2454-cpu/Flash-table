@@ -24,6 +24,7 @@ import {
   subscribeToMenuChanges
 } from '../services/menuService';
 import { AddMenuItemModal } from './AddMenuItemModal';
+import { FoodRateBadge } from './FoodRateBadge';
 
 interface MenuManagementTabProps {
   restaurant: Restaurant;
@@ -406,17 +407,15 @@ export const MenuManagementTab: React.FC<MenuManagementTabProps> = ({
                   )}
                 </div>
 
-                {/* Dish Name & Price */}
+                {/* Dish Name & Food Rate */}
                 <div>
-                  <div className="flex items-baseline justify-between gap-2">
+                  <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-2">
                     <h4 className={`text-base font-bold font-serif ${
                       item.isOutOfStock ? 'text-stone-700 line-through decoration-rose-400' : 'text-[#2C3333]'
                     }`}>
                       {item.name}
                     </h4>
-                    <span className="text-base font-bold font-serif text-[#4F6F52] shrink-0">
-                      ₹{item.price}
-                    </span>
+                    <FoodRateBadge item={item} size="md" showLabel={true} className="shrink-0" />
                   </div>
 
                   <p className="text-xs text-[#2C3333]/70 mt-1 line-clamp-2 leading-relaxed">

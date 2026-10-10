@@ -26,6 +26,7 @@ import { createFoodOrderOnBackend } from '../services/foodService';
 import { formatINR, normalizePrice, calculateItemTotal } from '../utils/priceUtils';
 import { AllergenDietaryTagModal, DietaryTagFormData } from './AllergenDietaryTagModal';
 import { computeOrderAllergenSummary } from '../services/allergenSafetyService';
+import { FoodRateBadge } from './FoodRateBadge';
 
 export interface CartItemEntry {
   entryId: string;
@@ -707,9 +708,7 @@ export const FoodOrderModal: React.FC<FoodOrderModalProps> = ({
                                 {item.description}
                               </p>
                               <div className="mt-1.5 flex items-center justify-between">
-                                <span className="text-xs font-bold text-stone-900 font-serif">
-                                  {formatINR(item.price)}
-                                </span>
+                                <FoodRateBadge item={item} size="sm" showLabel={true} />
                               </div>
                             </div>
                           </div>

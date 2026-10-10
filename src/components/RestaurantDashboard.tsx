@@ -36,6 +36,7 @@ import {
   Bus,
   Package,
   Layers,
+  Crown,
   X
 } from 'lucide-react';
 import { 
@@ -60,6 +61,7 @@ import { DiningBillModal } from './DiningBillModal';
 import { FoodOrdersTab } from './FoodOrdersTab';
 import { MenuManagementTab } from './MenuManagementTab';
 import { TravelBookingsTab } from './TravelBookingsTab';
+import { RestaurantSubscriptionPlansTab } from './RestaurantSubscriptionPlansTab';
 import { getStoredSession, saveStoredSession } from '../services/authService';
 import { getDiningClockSession } from '../services/diningTimerService';
 import { getRestaurantReservationsFromBackend, updateReservationTimesOnBackend } from '../services/reservationService';
@@ -107,7 +109,8 @@ export type DashboardViewOption =
   | 'insights' 
   | 'owner-details'
   | 'settings' 
-  | 'floor-plan';
+  | 'floor-plan'
+  | 'subscription-plans';
 
 interface RestaurantDashboardProps {
   restaurants: Restaurant[];
@@ -1536,6 +1539,23 @@ export const RestaurantDashboard: React.FC<RestaurantDashboardProps> = ({
         >
           <Store className="w-3.5 h-3.5 text-[#4F6F52]" />
           <span>Owner & Venue Details</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setDashboardView('subscription-plans')}
+          className={`px-4 py-2.5 rounded-full text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
+            dashboardView === 'subscription-plans'
+              ? 'bg-[#2C3333] text-white shadow-xs'
+              : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300'
+          }`}
+          id="tab-subscription-plans"
+        >
+          <Crown className="w-3.5 h-3.5 text-amber-500" />
+          <span>Subscription Plans</span>
+          <span className="text-[10px] font-black uppercase tracking-wider bg-amber-400 text-stone-950 px-2 py-0.5 rounded-full shadow-2xs">
+            1st Mo Free
+          </span>
         </button>
 
         <button
@@ -3123,6 +3143,14 @@ export const RestaurantDashboard: React.FC<RestaurantDashboardProps> = ({
         <MenuManagementTab
           restaurant={activeRestaurant}
           onOpenDigitalMenu={() => setIsMenuOpen(true)}
+          onToast={onToast}
+        />
+      )}
+
+      {/* VIEW: RESTAURANT PARTNER SUBSCRIPTION PLANS */}
+      {dashboardView === 'subscription-plans' && (
+        <RestaurantSubscriptionPlansTab
+          restaurant={activeRestaurant}
           onToast={onToast}
         />
       )}

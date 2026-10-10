@@ -74,3 +74,41 @@ export function formatINR(amount: any): string {
   const num = normalizePrice(amount, 0);
   return `₹${num.toLocaleString('en-IN')}`;
 }
+
+/**
+ * Returns normalized Actual Rate (original rate on the left side) and Discount Rate (offer rate).
+ * Guarantees Left side Actual Rate / Discount Rate consistency across Flash Table.
+ */
+export function getItemPrices(item: any): {
+  actualPrice: number;
+  discountPrice: number;
+  discountPercent: number;
+  isDiscounted: boolean;
+  rateDisplay: string;
+} {
+  const selling = normalizePrice(item?.price ?? item?.discountPrice, 350);
+  // If actualPrice is explicitly specified, use it. Otherwise derive a higher actual price (e.g., 20-30% markup)
+  let actual = normalizePrice(item?.actualPrice, 0);
+  if (actual <= selling) {
+    actual = Math.round(selling * 1.25);
+  }
+  const discount = normalizePrice(item?.discountPrice ?? selling, selling);
+  const discountPercent = actual > 0 ? Math.max(5, Math.round(((actual - discount) / actual) * 100)) : 0;
+
+  return {
+    actualPrice: actual,
+    discountPrice: discount,
+    discountPercent,
+    isDiscounted: actual > discount,
+    rateDisplay: `₹${actual} / ₹${discount}`,
+  };
+}
+
+/**
+ * Formats rate as left-side Actual Rate / Discount Rate string: e.g. "₹450 / ₹350"
+ */
+export function formatFoodRateString(actualPrice: any, discountPrice: any): string {
+  const actual = normalizePrice(actualPrice, 0);
+  const discount = normalizePrice(discountPrice, 0);
+  return `₹${actual} / ₹${discount}`;
+}

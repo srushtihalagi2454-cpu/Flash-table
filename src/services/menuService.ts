@@ -87,18 +87,31 @@ export function getCustomizedMenu(
     description: cat.description,
     items: cat.items
       .filter((item) => !deletedSet.has(item.id))
-      .map((item) => ({
-        ...item,
-        isOutOfStock: outOfStockSet.has(item.id),
-      })),
+      .map((item) => {
+        const actual = item.actualPrice && item.actualPrice > item.price ? item.actualPrice : Math.round(item.price * 1.25);
+        const discount = item.discountPrice ?? item.price;
+        return {
+          ...item,
+          actualPrice: actual,
+          discountPrice: discount,
+          price: discount,
+          isOutOfStock: outOfStockSet.has(item.id),
+        };
+      }),
   }));
 
   // Append user-added items into their respective category or a custom category
   storage.addedItems.forEach((addedItem) => {
     if (deletedSet.has(addedItem.id)) return;
 
+    const actual = addedItem.actualPrice && addedItem.actualPrice > addedItem.price ? addedItem.actualPrice : Math.round(addedItem.price * 1.25);
+    const discount = addedItem.discountPrice ?? addedItem.price;
+
     const itemWithStock: MenuItem = {
       ...addedItem,
+      actualPrice: actual,
+      discountPrice: discount,
+      price: discount,
       isOutOfStock: outOfStockSet.has(addedItem.id),
     };
 

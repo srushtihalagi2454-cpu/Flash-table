@@ -21,6 +21,7 @@ import { Restaurant, MenuItem, DietaryType } from '../types';
 import { getDishFallbackImage } from '../data/restaurantMenus';
 import { getCustomizedMenu, subscribeToMenuChanges } from '../services/menuService';
 import { getFormattedOperatingHours } from '../utils/operatingHours';
+import { FoodRateBadge } from './FoodRateBadge';
 
 interface DigitalMenuViewProps {
   restaurant: Restaurant;
@@ -620,10 +621,8 @@ export const DigitalMenuView: React.FC<DigitalMenuViewProps> = ({
                           </div>
 
                           {/* Price Overlay on Image bottom right */}
-                          <div className="absolute bottom-3 right-3 bg-white/95 backdrop-blur-xs px-2.5 py-1 rounded-lg shadow-sm">
-                            <span className="text-base font-bold font-serif text-[#2C3333]">
-                              ₹{item.price}
-                            </span>
+                          <div className="absolute bottom-3 right-3 bg-white/95 backdrop-blur-xs px-2.5 py-1.5 rounded-xl shadow-md border border-white/80">
+                            <FoodRateBadge item={item} size="sm" showLabel={false} />
                           </div>
                         </div>
                       )}
@@ -659,13 +658,11 @@ export const DigitalMenuView: React.FC<DigitalMenuViewProps> = ({
                                 ) : null}
                               </div>
 
-                              <span className="text-base font-bold font-serif text-[#2C3333]">
-                                ₹{item.price}
-                              </span>
+                              <FoodRateBadge item={item} size="sm" showLabel={false} />
                             </div>
                           )}
 
-                          {/* Dish Name */}
+                          {/* Dish Name & Food Rate Badge */}
                           <div className="flex items-start justify-between gap-2">
                             <h3 className={`text-lg font-bold font-serif leading-snug transition-colors ${
                               item.isOutOfStock 
@@ -674,11 +671,18 @@ export const DigitalMenuView: React.FC<DigitalMenuViewProps> = ({
                             }`}>
                               {item.name}
                             </h3>
-                            {item.isOutOfStock && (
+                            {item.isOutOfStock ? (
                               <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
                                 Unavailable
                               </span>
+                            ) : (
+                              <FoodRateBadge item={item} size="sm" showLabel={false} className="shrink-0 sm:hidden" />
                             )}
+                          </div>
+
+                          {/* Food Rate Badge with Actual Rate / Discount Rate */}
+                          <div className="mt-2 py-1 border-y border-[#FAF9F6]">
+                            <FoodRateBadge item={item} size="md" showLabel={true} />
                           </div>
 
                           {/* Description */}

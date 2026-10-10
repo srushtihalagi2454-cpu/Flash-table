@@ -44,7 +44,8 @@ export const AddMenuItemModal: React.FC<AddMenuItemModalProps> = ({
 }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [price, setPrice] = useState<string>('350');
+  const [actualPrice, setActualPrice] = useState<string>('450');
+  const [discountPrice, setDiscountPrice] = useState<string>('350');
   const [selectedCategory, setSelectedCategory] = useState<string>(
     existingCategories[0] || 'Starters & Small Plates'
   );
@@ -77,9 +78,16 @@ export const AddMenuItemModal: React.FC<AddMenuItemModalProps> = ({
       return;
     }
 
-    const numericPrice = parseFloat(price);
-    if (isNaN(numericPrice) || numericPrice <= 0) {
-      setErrorMsg('Please enter a valid price in ₹.');
+    const numActual = parseFloat(actualPrice);
+    const numDiscount = parseFloat(discountPrice);
+
+    if (isNaN(numActual) || numActual <= 0) {
+      setErrorMsg('Please enter a valid Actual Rate in ₹.');
+      return;
+    }
+
+    if (isNaN(numDiscount) || numDiscount <= 0) {
+      setErrorMsg('Please enter a valid Discount Rate in ₹.');
       return;
     }
 
@@ -90,7 +98,9 @@ export const AddMenuItemModal: React.FC<AddMenuItemModalProps> = ({
     const newItem = addRestaurantMenuItem(restaurantId, {
       name: name.trim(),
       description: description.trim() || `${name.trim()} prepared fresh to order with house-crafted spices.`,
-      price: Math.round(numericPrice),
+      price: Math.round(numDiscount),
+      actualPrice: Math.round(numActual),
+      discountPrice: Math.round(numDiscount),
       category: finalCategory,
       dietary,
       isChefSpecial: selectedTags.includes('Chef Special'),
@@ -173,26 +183,76 @@ export const AddMenuItemModal: React.FC<AddMenuItemModalProps> = ({
             />
           </div>
 
-          {/* Price & Category Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Price */}
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-[#2C3333]/80 mb-1.5 flex items-center gap-1">
-                <span>Price (₹ INR) *</span>
-              </label>
-              <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-stone-500">₹</span>
-                <input
-                  type="number"
-                  min="1"
-                  required
-                  placeholder="350"
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                  className="w-full pl-8 pr-3.5 py-2.5 rounded-xl border border-[#E8E6E1] bg-[#FAF9F6] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#4F6F52] text-sm font-bold text-[#2C3333]"
-                />
+          {/* Food Rate: Left Side Actual Rate / Discount Rate Grid */}
+          <div className="p-4 rounded-2xl bg-[#FAF9F6] border border-[#E8E6E1] space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-[#2C3333]">
+                Food Rate (Left Side Actual Rate / Discount Rate)
+              </span>
+              <span className="text-[10px] text-stone-500 font-semibold">
+                Format: Actual / Discount
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Left Side: Actual Rate */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-[#2C3333]/80 mb-1.5 flex items-center gap-1">
+                  <Tag className="w-3.5 h-3.5 text-stone-500" />
+                  <span>Left Side: Actual Rate (₹) *</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-stone-400">₹</span>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    placeholder="450"
+                    value={actualPrice}
+                    onChange={(e) => setActualPrice(e.target.value)}
+                    className="w-full pl-8 pr-3.5 py-2.5 rounded-xl border border-[#E8E6E1] bg-white focus:outline-none focus:ring-2 focus:ring-[#4F6F52] text-sm font-bold text-stone-700"
+                  />
+                </div>
+                <span className="text-[10px] text-stone-500 mt-1 block">Original Standard / MRP Rate</span>
+              </div>
+
+              {/* Right Side: Discount Rate */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-[#4F6F52] mb-1.5 flex items-center gap-1">
+                  <Flame className="w-3.5 h-3.5 text-[#4F6F52]" />
+                  <span>Right Side: Discount Rate (₹) *</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-[#4F6F52]">₹</span>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    placeholder="350"
+                    value={discountPrice}
+                    onChange={(e) => setDiscountPrice(e.target.value)}
+                    className="w-full pl-8 pr-3.5 py-2.5 rounded-xl border border-emerald-300 bg-white focus:outline-none focus:ring-2 focus:ring-[#4F6F52] text-sm font-bold text-[#4F6F52]"
+                  />
+                </div>
+                <span className="text-[10px] text-emerald-700 font-semibold mt-1 block">Special Flash Discount Offer</span>
               </div>
             </div>
+
+            {/* Live Pricing Preview */}
+            <div className="pt-2 border-t border-[#E8E6E1] flex items-center justify-between text-xs">
+              <span className="text-[11px] font-semibold text-stone-500">Live Rate Format Preview:</span>
+              <div className="flex items-center gap-1.5 font-serif font-bold">
+                <span className="line-through text-stone-600 text-xs">₹{actualPrice || '0'}</span>
+                <span className="text-stone-400">/</span>
+                <span className="text-emerald-700 text-sm">₹{discountPrice || '0'}</span>
+                {parseFloat(actualPrice) > parseFloat(discountPrice) && (
+                  <span className="text-[10px] text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded font-sans">
+                    {Math.round(((parseFloat(actualPrice) - parseFloat(discountPrice)) / parseFloat(actualPrice)) * 100)}% OFF
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
 
             {/* Category */}
             <div>
@@ -239,7 +299,6 @@ export const AddMenuItemModal: React.FC<AddMenuItemModalProps> = ({
                 </div>
               )}
             </div>
-          </div>
 
           {/* Dietary Type Selector */}
           <div>

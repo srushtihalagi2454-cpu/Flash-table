@@ -23,6 +23,8 @@ interface OtpVerificationModalProps {
   purpose?: 'signup' | 'forgot_password';
   initialOtpResult?: OtpRequestResult | null;
   onVerified: (verificationToken: string) => void;
+  selectedRole?: 'customer' | 'restaurant-owner';
+  onChangeRole?: (newRole: 'customer' | 'restaurant-owner') => void;
 }
 
 export const OtpVerificationModal: React.FC<OtpVerificationModalProps> = ({
@@ -33,6 +35,8 @@ export const OtpVerificationModal: React.FC<OtpVerificationModalProps> = ({
   purpose = 'signup',
   initialOtpResult,
   onVerified,
+  selectedRole,
+  onChangeRole,
 }) => {
   const [digits, setDigits] = useState<string[]>(['', '', '', '', '', '']);
   const [error, setError] = useState<string | null>(null);
@@ -218,6 +222,31 @@ export const OtpVerificationModal: React.FC<OtpVerificationModalProps> = ({
               {maskedDest}
             </span>
           </div>
+
+          {/* Selected Role Confirmation Banner */}
+          {selectedRole && (
+            <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200 flex items-center justify-between text-xs animate-in fade-in">
+              <div className="flex items-center gap-2">
+                <span className="text-stone-500 font-medium">Entering App As:</span>
+                <span className={`font-bold px-2.5 py-0.5 rounded-full border text-[11px] flex items-center gap-1 ${
+                  selectedRole === 'customer'
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : 'bg-amber-50 text-amber-900 border-amber-200'
+                }`}>
+                  {selectedRole === 'customer' ? '🌟 Customer / Diner' : '🏪 Restaurant Owner'}
+                </span>
+              </div>
+              {onChangeRole && (
+                <button
+                  type="button"
+                  onClick={() => onChangeRole(selectedRole === 'customer' ? 'restaurant-owner' : 'customer')}
+                  className="text-[11px] font-bold text-[#4F6F52] hover:text-[#3D5A40] hover:underline cursor-pointer"
+                >
+                  Change to {selectedRole === 'customer' ? 'Restaurant Owner' : 'Customer'}
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Default OTP Notification Banner */}
           <div className="p-3.5 rounded-2xl bg-emerald-50/90 border border-emerald-200 text-emerald-950 flex items-center justify-between gap-3 text-xs animate-in fade-in">

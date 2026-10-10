@@ -25,7 +25,8 @@ import {
   ShieldAlert,
   Clock,
   KeyRound,
-  RotateCcw
+  RotateCcw,
+  Crown
 } from 'lucide-react';
 import { 
   AuthMode, 
@@ -124,6 +125,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   // First-Time Welcome Modal State (Requirement 4)
   const [firstTimeModalOpen, setFirstTimeModalOpen] = useState<boolean>(false);
   const [firstTimeUserData, setFirstTimeUserData] = useState<any>(null);
+
+  // Role Selection before Mobile Number Verification Modal State
+  const [isRoleModalBeforeMobileVerificationOpen, setIsRoleModalBeforeMobileVerificationOpen] = useState<boolean>(false);
+  const [pendingMobileDestination, setPendingMobileDestination] = useState<string>('');
+
+  // Post-Login Role Choice Modal State (Customer vs Restaurant Owner)
+  const [postLoginRoleChoiceUser, setPostLoginRoleChoiceUser] = useState<any>(null);
 
   // Company Admin Setup Modal State
   const [isAdminSetupModalOpen, setIsAdminSetupModalOpen] = useState<boolean>(false);
@@ -276,16 +284,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({
             return;
           }
 
-          if (selectedRole === 'restaurant-owner' && !result.userSummary.restaurantId) {
-            setPendingOwnerUser(result.userSummary || {
-              email: loginData.loginIdentifier,
-              fullName: loginData.loginIdentifier?.toLowerCase().includes('rohan') ? 'Rohan' : 'Restaurant Owner',
-            });
-            setShowRestaurantPicker(true);
+          if (selectedRole === 'company-admin') {
+            onAuthSuccess(result.userSummary, 'company-admin');
             return;
           }
 
-          onAuthSuccess(result.userSummary, selectedRole);
+          // Ask the user whether they want to use the app as Customer or Restaurant Owner
+          setPostLoginRoleChoiceUser(result.userSummary);
         } else {
           if (result.message?.includes('locked')) {
             setLockoutRemaining(60);
@@ -317,8 +322,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({
       setPendingOtpDestination(targetDestination);
       setPendingOtpType(signupMethod);
 
+      // REQUIREMENT 1: Ask the app user to select whether they want to enter the app as a Customer or Restaurant Owner BEFORE verifying their mobile number!
+      if (signupMethod === 'mobile') {
+        setPendingMobileDestination(targetDestination);
+        setIsRoleModalBeforeMobileVerificationOpen(true);
+        setIsSubmitting(false);
+        return;
+      }
+
       try {
-        // Request Real OTP
+        // Request Real OTP for Email
         const otpRes = await requestOtp(targetDestination, signupMethod, 'signup');
         setIsSubmitting(false);
 
@@ -333,6 +346,47 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         setErrors({ general: 'Unable to reach verification service. Please try again.' });
       }
     }
+  };
+
+  // Handler to confirm role selection before mobile verification and dispatch OTP
+  const handleConfirmRoleAndProceedToMobileOtp = async (chosenRole: UserRole) => {
+    setSelectedRole(chosenRole);
+    setIsRoleModalBeforeMobileVerificationOpen(false);
+    setIsSubmitting(true);
+
+    try {
+      const destination = pendingMobileDestination || signUpData.mobileNumber.trim();
+      setPendingOtpDestination(destination);
+      setPendingOtpType('mobile');
+      const otpRes = await requestOtp(destination, 'mobile', 'signup');
+      setIsSubmitting(false);
+
+      if (otpRes.success) {
+        setInitialOtpResult(otpRes);
+        setIsOtpModalOpen(true);
+      } else {
+        setErrors({ general: otpRes.message || 'Unable to dispatch mobile verification code.' });
+      }
+    } catch {
+      setIsSubmitting(false);
+      setErrors({ general: 'Unable to reach verification service. Please try again.' });
+    }
+  };
+
+  // Handler for role selection after login
+  const handleSelectPostLoginRole = (chosenRole: UserRole) => {
+    if (!postLoginRoleChoiceUser) return;
+    const user = postLoginRoleChoiceUser;
+    setPostLoginRoleChoiceUser(null);
+    setSelectedRole(chosenRole);
+
+    if (chosenRole === 'restaurant-owner' && !user.restaurantId) {
+      setPendingOwnerUser(user);
+      setShowRestaurantPicker(true);
+      return;
+    }
+
+    onAuthSuccess(user, chosenRole);
   };
 
   // Callback when OTP verification succeeds during signup
@@ -887,6 +941,68 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               {mode === 'signup' && (
                 <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                   
+                  {/* REQUIREMENT 1: Ask user whether they want to enter the app as Customer or Restaurant Owner */}
+                  <div className="space-y-2 p-3.5 rounded-2xl bg-[#FAF9F6] border border-[#E8E6E1]">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]">
+                        Enter Flash Table As: <span className="text-rose-500">*</span>
+                      </label>
+                      <span className="text-[10px] text-stone-500 font-semibold">
+                        Role selection before verification
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {/* Customer Option */}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRole('customer')}
+                        className={`p-3 rounded-2xl border-2 text-left transition-all cursor-pointer flex flex-col justify-between ${
+                          selectedRole === 'customer'
+                            ? 'border-[#4F6F52] bg-white ring-2 ring-[#4F6F52]/20 shadow-xs'
+                            : 'border-[#E8E6E1] bg-stone-50/50 hover:bg-white'
+                        }`}
+                        id="signup-role-customer"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                            selectedRole === 'customer' ? 'bg-[#4F6F52] text-white' : 'bg-stone-200 text-stone-600'
+                          }`}>
+                            <Compass className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold text-[#2C3333] block">Customer</span>
+                            <span className="text-[10px] text-stone-500">Diner & Reservations</span>
+                          </div>
+                        </div>
+                      </button>
+
+                      {/* Restaurant Owner Option */}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRole('restaurant-owner')}
+                        className={`p-3 rounded-2xl border-2 text-left transition-all cursor-pointer flex flex-col justify-between ${
+                          selectedRole === 'restaurant-owner'
+                            ? 'border-[#4F6F52] bg-white ring-2 ring-[#4F6F52]/20 shadow-xs'
+                            : 'border-[#E8E6E1] bg-stone-50/50 hover:bg-white'
+                        }`}
+                        id="signup-role-owner"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                            selectedRole === 'restaurant-owner' ? 'bg-[#4F6F52] text-white' : 'bg-stone-200 text-stone-600'
+                          }`}>
+                            <Store className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold text-[#2C3333] block">Restaurant Owner</span>
+                            <span className="text-[10px] text-emerald-700 font-bold">1st Month FREE</span>
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
                   {/* TWO REGISTRATION OPTIONS (Requirement 2) */}
                   <div>
                     <label className="block text-[11px] font-bold uppercase tracking-widest text-[#2C3333]/80 mb-2">
@@ -1209,7 +1325,202 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         purpose="signup"
         initialOtpResult={initialOtpResult}
         onVerified={handleOtpVerified}
+        selectedRole={selectedRole === 'restaurant-owner' ? 'restaurant-owner' : 'customer'}
+        onChangeRole={(newRole) => setSelectedRole(newRole)}
       />
+
+      {/* Modal 1: Role Selection Before Mobile Verification (Requirement 1) */}
+      {isRoleModalBeforeMobileVerificationOpen && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
+          id="modal-role-select-before-mobile"
+        >
+          <div className="bg-white w-full max-w-lg rounded-3xl border border-[#E8E6E1] shadow-2xl p-6 sm:p-7 relative overflow-hidden space-y-5">
+            
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-[#4F6F52]/10 text-[#4F6F52] flex items-center justify-center border border-[#4F6F52]/20 shadow-xs">
+                  <Smartphone className="w-5 h-5 text-[#4F6F52]" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold font-serif text-[#2C3333]">
+                    Select Your Role to Enter App
+                  </h3>
+                  <p className="text-xs text-stone-500">
+                    Before verifying mobile number (+91 {pendingMobileDestination || signUpData.mobileNumber.trim()})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRoleModalBeforeMobileVerificationOpen(false)}
+                className="w-8 h-8 rounded-full border border-[#E8E6E1] bg-white hover:bg-stone-100 flex items-center justify-center text-stone-500 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-stone-600 leading-relaxed">
+              How would you like to enter Flash Table? Please select your role before we dispatch the 6-digit verification code to your mobile number.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {/* Option A: Customer */}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelectedRole('customer')}
+                className={`p-4 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between ${
+                  selectedRole === 'customer'
+                    ? 'border-[#4F6F52] bg-[#4F6F52]/5 ring-2 ring-[#4F6F52]/20 shadow-sm'
+                    : 'border-[#E8E6E1] bg-[#FAF9F6] hover:bg-white'
+                }`}
+                id="modal-pick-customer"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                      selectedRole === 'customer' ? 'bg-[#4F6F52] text-white' : 'bg-stone-200 text-stone-600'
+                    }`}>
+                      <Compass className="w-4 h-4" />
+                    </div>
+                    {selectedRole === 'customer' && <CheckCircle2 className="w-5 h-5 text-[#4F6F52]" />}
+                  </div>
+                  <h4 className="text-sm font-bold text-[#2C3333]">Enter as Customer</h4>
+                  <p className="text-[11px] text-stone-500 mt-1 leading-snug">
+                    Discover dining venues, check live table openings, instant bookings & flash deals.
+                  </p>
+                </div>
+                <div className="mt-3 pt-2 border-t border-[#E8E6E1]/60">
+                  <span className="text-[10px] font-bold text-[#4F6F52] uppercase tracking-wider block">
+                    ✓ Diner Account
+                  </span>
+                </div>
+              </div>
+
+              {/* Option B: Restaurant Owner */}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelectedRole('restaurant-owner')}
+                className={`p-4 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between ${
+                  selectedRole === 'restaurant-owner'
+                    ? 'border-[#4F6F52] bg-[#4F6F52]/5 ring-2 ring-[#4F6F52]/20 shadow-sm'
+                    : 'border-[#E8E6E1] bg-[#FAF9F6] hover:bg-white'
+                }`}
+                id="modal-pick-owner"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                      selectedRole === 'restaurant-owner' ? 'bg-[#4F6F52] text-white' : 'bg-stone-200 text-stone-600'
+                    }`}>
+                      <Store className="w-4 h-4" />
+                    </div>
+                    {selectedRole === 'restaurant-owner' && <CheckCircle2 className="w-5 h-5 text-[#4F6F52]" />}
+                  </div>
+                  <h4 className="text-sm font-bold text-[#2C3333]">Enter as Restaurant Owner</h4>
+                  <p className="text-[11px] text-stone-500 mt-1 leading-snug">
+                    Partner dashboard, floor tables, dining bills & partner subscription plans.
+                  </p>
+                </div>
+                <div className="mt-3 pt-2 border-t border-[#E8E6E1]/60">
+                  <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded uppercase tracking-wider block">
+                    ★ 1st Month FREE Plan
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleConfirmRoleAndProceedToMobileOtp(selectedRole)}
+              className="w-full py-3.5 rounded-full bg-[#4F6F52] hover:bg-[#3D5A40] text-white text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
+              id="btn-confirm-role-and-send-otp"
+            >
+              <span>Confirm & Send Verification OTP (123456)</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 2: Post-Login Role Choice (Customer vs Restaurant Owner) */}
+      {postLoginRoleChoiceUser && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
+          id="modal-post-login-role-choice"
+        >
+          <div className="bg-white w-full max-w-md rounded-3xl border border-[#E8E6E1] shadow-2xl p-6 sm:p-7 relative overflow-hidden space-y-5">
+            <div className="text-center space-y-1.5">
+              <div className="w-12 h-12 rounded-2xl bg-[#4F6F52]/10 text-[#4F6F52] flex items-center justify-center mx-auto mb-2 border border-[#4F6F52]/20">
+                <Crown className="w-6 h-6 text-amber-500" />
+              </div>
+              <h3 className="text-xl font-bold font-serif text-[#2C3333]">
+                Welcome Back, {postLoginRoleChoiceUser.fullName || 'User'}!
+              </h3>
+              <p className="text-xs text-stone-500">
+                Please select how you would like to enter Flash Table today:
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {/* Enter as Customer */}
+              <button
+                type="button"
+                onClick={() => handleSelectPostLoginRole('customer')}
+                className="w-full p-4 rounded-2xl border-2 border-[#E8E6E1] hover:border-[#4F6F52] bg-[#FAF9F6] hover:bg-white text-left transition-all flex items-center justify-between group cursor-pointer shadow-2xs hover:shadow-sm"
+                id="btn-login-as-customer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 group-hover:bg-[#4F6F52] group-hover:text-white transition-colors">
+                    <Compass className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-[#2C3333]">Use as Customer</h4>
+                    <p className="text-[11px] text-stone-500">
+                      Explore dining spots, live seating & book tables
+                    </p>
+                  </div>
+                </div>
+                <ArrowRight className="w-4 h-4 text-stone-400 group-hover:text-[#4F6F52] group-hover:translate-x-0.5 transition-transform" />
+              </button>
+
+              {/* Enter as Restaurant Owner */}
+              <button
+                type="button"
+                onClick={() => handleSelectPostLoginRole('restaurant-owner')}
+                className="w-full p-4 rounded-2xl border-2 border-[#E8E6E1] hover:border-[#4F6F52] bg-[#FAF9F6] hover:bg-white text-left transition-all flex items-center justify-between group cursor-pointer shadow-2xs hover:shadow-sm"
+                id="btn-login-as-owner"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center shrink-0 group-hover:bg-[#4F6F52] group-hover:text-white transition-colors">
+                    <Store className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-sm font-bold text-[#2C3333]">Use as Restaurant Owner</h4>
+                      <span className="text-[9px] font-black uppercase tracking-wider bg-amber-400 text-stone-950 px-1.5 py-0.5 rounded">
+                        1st Mo Free
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-stone-500">
+                      Partner console, live floor tables & subscription plans
+                    </p>
+                  </div>
+                </div>
+                <ArrowRight className="w-4 h-4 text-stone-400 group-hover:text-[#4F6F52] group-hover:translate-x-0.5 transition-transform" />
+              </button>
+            </div>
+
+            <div className="text-center pt-2 border-t border-[#E8E6E1]/60">
+              <span className="text-[11px] text-stone-400">
+                You can easily switch roles at any time from the navigation bar.
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* First-Time Welcome Modal (Requirement 4) */}
       <FirstTimeWelcomeModal

@@ -989,9 +989,12 @@ export const CustomerHomePage: React.FC<CustomerHomePageProps> = ({
                         <span className="text-[11px] uppercase font-semibold tracking-wider text-[#4F6F52]">
                           {restaurant.neighborhood} • Bengaluru
                         </span>
-                        <span className="text-xs font-semibold text-[#2C3333]">
-                          ₹{restaurant.costForTwo} for two
-                        </span>
+                        <div className="flex items-center gap-1 font-serif text-xs">
+                          <span className="line-through text-stone-600 font-semibold">₹{Math.round(restaurant.costForTwo * 1.25)}</span>
+                          <span className="text-stone-400 font-bold">/</span>
+                          <span className="text-emerald-700 font-bold">₹{restaurant.costForTwo}</span>
+                          <span className="text-[10px] text-stone-500 font-sans font-medium">for two</span>
+                        </div>
                       </div>
 
                       <h3 className="text-lg font-serif font-bold text-[#2C3333] mt-1 group-hover:text-[#4F6F52] transition-colors">
